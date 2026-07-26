@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import {
   BORDER_KIND_LABELS,
@@ -7,12 +8,17 @@ import {
   type BorderClassification,
   type BorderKind,
 } from "@/src/domain/map/border-palette";
+import { interpolateRasterPoints } from "@/src/domain/map/raster-territory";
 
 type Country = { id: string; name: string; code: string; color: string };
 type Tool = "assign" | "island" | "border" | "pencil" | "fill" | "erase";
 type AssignmentMode = "COLOR" | "REGION";
 type MapPoint = { x: number; y: number };
 type MenuState = { colorHex: string; x: number; y: number; left: number; top: number } | null;
+
+const MIN_ZOOM = 25;
+const MAX_ZOOM = 800;
+const ZOOM_STEP = 25;
 
 const TOOL_LABELS: Record<Tool, string> = {
   assign: "영토 할당",
@@ -150,11 +156,15 @@ export function PixelMapEditor({
   initialBorderClassifications: BorderClassification[];
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const drawingRef = useRef(false);
+  const lastPaintPointRef = useRef<MapPoint | null>(null);
   const [tool, setTool] = useState<Tool>("assign");
   const [paintColor, setPaintColor] = useState("#2F8CA3");
   const [brushSize, setBrushSize] = useState(8);
+  const [zoom, setZoom] = useState(100);
   const [ready, setReady] = useState(false);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -167,12 +177,8 @@ export function PixelMapEditor({
   const [showBorders, setShowBorders] = useState(true);
   const [borderSourceColor, setBorderSourceColor] = useState("#000000");
   const [borderKind, setBorderKind] = useState<BorderKind>("LEGAL");
-  const [borderDisplayColor, setBorderDisplayColor] = useState(
-    DEFAULT_BORDER_DISPLAY_COLORS.LEGAL,
-  );
-  const [borderClassifications, setBorderClassifications] = useState(
-    initialBorderClassifications,
-  );
+  const [borderDisplayColor, setBorderDisplayColor] = useState(DEFAULT_BORDER_DISPLAY_COLORS.LEGAL);
+  const [borderClassifications, setBorderClassifications] = useState(initialBorderClassifications);
 
   const selectedCountry = countries.find((country) => country.id === countryId);
   const borderOverlayUrl = useMemo(
@@ -193,6 +199,7 @@ export function PixelMapEditor({
         if (!canvas) return;
         canvas.width = image.naturalWidth;
         canvas.height = image.naturalHeight;
+        setCanvasSize({ width: image.naturalWidth, height: image.naturalHeight });
         const context = canvas.getContext("2d", { willReadFrequently: true });
         if (!context) return;
         context.imageSmoothingEnabled = false;
@@ -236,17 +243,32 @@ export function PixelMapEditor({
     return quantizedHex(pixel[0], pixel[1], pixel[2]);
   }
 
-  function pushIslandPoint(point: MapPoint) {
-    setIslandPoints((current) => {
-      const previous = current.at(-1);
-      if (
-        previous &&
-        Math.hypot(previous.x - point.x, previous.y - point.y) < Math.max(1, brushSize / 3)
-      ) {
-        return current;
-      }
-      return [...current, point].slice(-5000);
+  function changeZoom(nextZoom: number, anchorX?: number, anchorY?: number) {
+    const viewport = viewportRef.current;
+    const normalized = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom));
+    if (normalized === zoom) return;
+    if (!viewport) {
+      setZoom(normalized);
+      return;
+    }
+    const x = anchorX ?? viewport.clientWidth / 2;
+    const y = anchorY ?? viewport.clientHeight / 2;
+    const horizontalRatio = (viewport.scrollLeft + x) / Math.max(1, viewport.scrollWidth);
+    const verticalRatio = (viewport.scrollTop + y) / Math.max(1, viewport.scrollHeight);
+    setZoom(normalized);
+    requestAnimationFrame(() => {
+      viewport.scrollLeft = horizontalRatio * viewport.scrollWidth - x;
+      viewport.scrollTop = verticalRatio * viewport.scrollHeight - y;
     });
+  }
+
+  function pushIslandPoint(point: MapPoint) {
+    const previous = lastPaintPointRef.current;
+    const additions = previous
+      ? interpolateRasterPoints(previous, point, Math.max(1, brushSize / 3))
+      : [point];
+    lastPaintPointRef.current = point;
+    setIslandPoints((current) => [...current, ...additions].slice(-5000));
   }
 
   function paint(event: PointerEvent<HTMLCanvasElement>) {
@@ -287,13 +309,18 @@ export function PixelMapEditor({
       return;
     }
     const size = Math.max(1, Math.round(brushSize));
-    const left = Math.floor(point.x - size / 2);
-    const top = Math.floor(point.y - size / 2);
-    if (tool === "erase") context.clearRect(left, top, size, size);
-    else {
-      context.fillStyle = paintColor;
-      context.fillRect(left, top, size, size);
+    const previous = lastPaintPointRef.current;
+    const points = previous
+      ? interpolateRasterPoints(previous, point, Math.max(1, size / 3))
+      : [point];
+    context.fillStyle = paintColor;
+    for (const current of points) {
+      const left = Math.floor(current.x - size / 2);
+      const top = Math.floor(current.y - size / 2);
+      if (tool === "erase") context.clearRect(left, top, size, size);
+      else context.fillRect(left, top, size, size);
     }
+    lastPaintPointRef.current = point;
     setDirty(true);
   }
 
@@ -329,6 +356,7 @@ export function PixelMapEditor({
   async function assignTerritory(mode: "COLOR" | "REGION" | "ISLAND") {
     const seed = mode === "ISLAND" ? islandPoints.at(0) : menu;
     if (!seed || !countryId) return;
+    const targetColor = mode === "COLOR" && menu ? menu.colorHex : territoryColor;
     setBusy(true);
     setMessage("");
     try {
@@ -342,7 +370,7 @@ export function PixelMapEditor({
           mode,
           x: seed.x,
           y: seed.y,
-          territoryColor,
+          territoryColor: targetColor,
           oceanColor,
           brushRadius: brushSize,
           points: mode === "ISLAND" ? islandPoints : [],
@@ -369,8 +397,7 @@ export function PixelMapEditor({
   }
 
   function addBorderClassification() {
-    const displayColor =
-      borderKind === "NONE" ? "#000000" : borderDisplayColor.toUpperCase();
+    const displayColor = borderKind === "NONE" ? "#000000" : borderDisplayColor.toUpperCase();
     setBorderClassifications((current) => [
       ...current.filter(
         (classification) =>
@@ -419,6 +446,7 @@ export function PixelMapEditor({
             onClick={() => {
               setTool(value);
               setMenu(null);
+              if (value === "border") setShowBorders(true);
               if (value !== "island") setIslandPoints([]);
             }}
           >
@@ -444,6 +472,35 @@ export function PixelMapEditor({
           />
           <output>{brushSize}px</output>
         </label>
+        <div className="pixel-map-zoom" role="group" aria-label="지도 확대 축소">
+          <button
+            type="button"
+            className="button secondary"
+            aria-label="축소"
+            disabled={zoom <= MIN_ZOOM}
+            onClick={() => changeZoom(zoom - ZOOM_STEP)}
+          >
+            −
+          </button>
+          <output>{zoom}%</output>
+          <button
+            type="button"
+            className="button secondary"
+            aria-label="확대"
+            disabled={zoom >= MAX_ZOOM}
+            onClick={() => changeZoom(zoom + ZOOM_STEP)}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={zoom === 100}
+            onClick={() => changeZoom(100)}
+          >
+            맞춤
+          </button>
+        </div>
         <label className="map-border-toggle">
           <input
             type="checkbox"
@@ -566,9 +623,7 @@ export function PixelMapEditor({
                   className="secondary"
                   onClick={() =>
                     setBorderClassifications((current) =>
-                      current.filter(
-                        (row) => row.sourceColor !== classification.sourceColor,
-                      ),
+                      current.filter((row) => row.sourceColor !== classification.sourceColor),
                     )
                   }
                 >
@@ -588,8 +643,27 @@ export function PixelMapEditor({
       )}
 
       {hasRaster ? (
-        <div className="pixel-map-viewport">
-          <div className="pixel-map-canvas-wrap">
+        <div
+          ref={viewportRef}
+          className="pixel-map-viewport"
+          onWheel={(event) => {
+            event.preventDefault();
+            const bounds = event.currentTarget.getBoundingClientRect();
+            changeZoom(
+              zoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP),
+              event.clientX - bounds.left,
+              event.clientY - bounds.top,
+            );
+          }}
+        >
+          <div
+            className="pixel-map-canvas-wrap"
+            style={{
+              width: `${zoom}%`,
+              minWidth: `${Math.round((720 * zoom) / 100)}px`,
+              marginInline: zoom <= 100 ? "auto" : 0,
+            }}
+          >
             <canvas
               ref={canvasRef}
               className="pixel-map-canvas"
@@ -597,38 +671,40 @@ export function PixelMapEditor({
               onPointerDown={(event) => {
                 if (!ready || busy) return;
                 drawingRef.current = true;
+                lastPaintPointRef.current = null;
                 event.currentTarget.setPointerCapture(event.pointerId);
                 paint(event);
               }}
               onPointerMove={(event) => {
-                if (
-                  !drawingRef.current ||
-                  !["pencil", "erase", "island"].includes(tool)
-                )
-                  return;
+                if (!drawingRef.current || !["pencil", "erase", "island"].includes(tool)) return;
                 paint(event);
               }}
               onPointerUp={(event) => {
                 drawingRef.current = false;
+                lastPaintPointRef.current = null;
                 if (event.currentTarget.hasPointerCapture(event.pointerId))
                   event.currentTarget.releasePointerCapture(event.pointerId);
               }}
               onPointerCancel={() => {
                 drawingRef.current = false;
+                lastPaintPointRef.current = null;
               }}
             />
             {showBorders && borderOverlayUrl && (
-              <img
+              <NextImage
                 className="pixel-border-overlay"
                 src={borderOverlayUrl}
                 alt=""
+                width={canvasSize.width || 1}
+                height={canvasSize.height || 1}
+                unoptimized
                 draggable={false}
               />
             )}
-            {islandPoints.length > 0 && canvasRef.current && (
+            {islandPoints.length > 0 && canvasSize.width > 0 && (
               <svg
                 className="pixel-selection-overlay"
-                viewBox={`0 0 ${canvasRef.current.width} ${canvasRef.current.height}`}
+                viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}
                 aria-hidden="true"
               >
                 <polyline
@@ -696,7 +772,6 @@ export function PixelMapEditor({
                   type="button"
                   disabled={!selectedCountry || busy}
                   onClick={() => {
-                    if (assignmentMode === "COLOR") setTerritoryColor(menu.colorHex);
                     void assignTerritory(assignmentMode);
                   }}
                 >

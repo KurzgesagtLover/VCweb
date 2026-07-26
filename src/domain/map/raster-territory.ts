@@ -3,8 +3,27 @@ import type { Rgb } from "./image-colors";
 export type TerritoryAssignmentMode = "COLOR" | "REGION" | "ISLAND";
 export type RasterPoint = { x: number; y: number };
 
+export function interpolateRasterPoints(from: RasterPoint, to: RasterPoint, spacing = 1) {
+  const distance = Math.hypot(to.x - from.x, to.y - from.y);
+  const steps = Math.max(1, Math.ceil(distance / Math.max(1, spacing)));
+  const points: RasterPoint[] = [];
+  for (let index = 1; index <= steps; index += 1) {
+    const ratio = index / steps;
+    const point = {
+      x: Math.round(from.x + (to.x - from.x) * ratio),
+      y: Math.round(from.y + (to.y - from.y) * ratio),
+    };
+    const previous = points.at(-1);
+    if (!previous || previous.x !== point.x || previous.y !== point.y) points.push(point);
+  }
+  return points;
+}
+
 function isBlack(data: Uint8Array, offset: number) {
-  return data[offset + 3] < 128 || (data[offset] <= 32 && data[offset + 1] <= 32 && data[offset + 2] <= 32);
+  return (
+    data[offset + 3] < 128 ||
+    (data[offset] <= 32 && data[offset + 1] <= 32 && data[offset + 2] <= 32)
+  );
 }
 
 function matchesRgb(data: Uint8Array, offset: number, rgb: Rgb, tolerance = 8) {
@@ -170,4 +189,3 @@ export function removeRasterBorders(
 export function removeBlackBorders(data: Uint8Array, width: number, height: number) {
   return removeRasterBorders(data, width, height);
 }
-

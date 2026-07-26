@@ -3,7 +3,8 @@ import sharp from "sharp";
 import { getSession } from "@/src/auth/session";
 import { db } from "@/src/db";
 import { auditLogs, campaignMaps, mapRasterBorderLayers, mapRasters } from "@/src/db/schema";
-import { removeBlackBorders } from "@/src/domain/map/raster-territory";
+import { applyBorderClassifications, borderSourceRgbs } from "@/src/domain/map/border-palette";
+import { removeRasterBorders } from "@/src/domain/map/raster-territory";
 import { actionRateLimiter } from "@/src/services/rate-limit";
 
 export const runtime = "nodejs";
@@ -35,15 +36,21 @@ export async function POST(request: Request) {
     return Response.json({ error: "잘못된 지도 정보입니다." }, { status: 400 });
   }
 
-  const campaignMap = await db.query.campaignMaps.findFirst({
-    where: and(eq(campaignMaps.id, mapId), eq(campaignMaps.campaignId, campaignId)),
-  });
+  const [campaignMap, borderLayer] = await Promise.all([
+    db.query.campaignMaps.findFirst({
+      where: and(eq(campaignMaps.id, mapId), eq(campaignMaps.campaignId, campaignId)),
+    }),
+    db.query.mapRasterBorderLayers.findFirst({
+      where: eq(mapRasterBorderLayers.mapId, mapId),
+    }),
+  ]);
   if (!campaignMap) {
     return Response.json({ error: "지도를 찾을 수 없습니다." }, { status: 404 });
   }
 
   let png: Buffer;
-  let borderlessPng: Buffer;
+  let borderlessPng: Buffer | null = null;
+  let renderedBorderData: Buffer | null = null;
   let width = 0;
   let height = 0;
   let sourceWidth = 0;
@@ -71,16 +78,28 @@ export async function POST(request: Request) {
       .ensureAlpha()
       .png({ compressionLevel: 9 })
       .toBuffer();
-    const decoded = await sharp(png)
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-    const cleaned = removeBlackBorders(decoded.data, width, height);
-    borderlessPng = await sharp(cleaned, {
-      raw: { width, height, channels: 4 },
-    })
-      .png({ compressionLevel: 9 })
-      .toBuffer();
+    if (mode === "save" && borderLayer) {
+      const decoded = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const borderlessRaw = removeRasterBorders(
+        decoded.data,
+        width,
+        height,
+        borderSourceRgbs(borderLayer.classifications),
+      );
+      const renderedRaw = applyBorderClassifications(
+        decoded.data,
+        borderlessRaw,
+        borderLayer.classifications,
+      );
+      [borderlessPng, renderedBorderData] = await Promise.all([
+        sharp(borderlessRaw, { raw: { width, height, channels: 4 } })
+          .png({ compressionLevel: 9 })
+          .toBuffer(),
+        sharp(renderedRaw, { raw: { width, height, channels: 4 } })
+          .png({ compressionLevel: 9 })
+          .toBuffer(),
+      ]);
+    }
   } catch (error) {
     const tooLarge = error instanceof Error && error.message === "TOO_LARGE";
     return Response.json(
@@ -122,6 +141,16 @@ export async function POST(request: Request) {
 
   if (mode === "upload") {
     await db.delete(mapRasterBorderLayers).where(eq(mapRasterBorderLayers.mapId, mapId));
+  } else if (borderLayer && renderedBorderData) {
+    await db
+      .update(mapRasterBorderLayers)
+      .set({
+        renderedData: renderedBorderData,
+        revision: sql`${mapRasterBorderLayers.revision} + 1`,
+        updatedBy: session.user.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(mapRasterBorderLayers.mapId, mapId));
   }
   await db.insert(auditLogs).values({
     campaignId,
