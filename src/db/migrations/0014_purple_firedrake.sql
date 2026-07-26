@@ -1,0 +1,1 @@
+ALTER TABLE "campaign_maps" ADD COLUMN "adaptive_resolution" boolean DEFAULT true NOT NULL;

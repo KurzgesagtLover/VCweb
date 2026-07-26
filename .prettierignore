@@ -1,0 +1,6 @@
+.next/
+node_modules/
+coverage/
+src/db/migrations/meta/
+pnpm-lock.yaml
+virtual-nation-mvp-codex-guide (1).md

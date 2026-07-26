@@ -1,0 +1,34 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+
+  web:
+    build:
+      context: .
+      target: runner
+    command: ["node", "server.js"]
+    environment:
+      DATABASE_URL: postgresql://virtual_nation:${POSTGRES_PASSWORD}@postgres:5432/virtual_nation
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL is required}
+      JUDGMENT_DEFAULT_PROVIDER: ${JUDGMENT_DEFAULT_PROVIDER:-fake}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    volumes: []
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      target: worker
+    command: ["pnpm", "worker"]
+    environment:
+      DATABASE_URL: postgresql://virtual_nation:${POSTGRES_PASSWORD}@postgres:5432/virtual_nation
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL is required}
+      JUDGMENT_DEFAULT_PROVIDER: ${JUDGMENT_DEFAULT_PROVIDER:-fake}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    volumes: []
+    restart: unless-stopped
