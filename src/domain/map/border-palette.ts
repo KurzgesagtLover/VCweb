@@ -1,8 +1,18 @@
 import { z } from "zod";
 import { parseHexColor, rgbToHex, type Rgb } from "./image-colors";
 
-export const borderKindSchema = z.enum(["INACTIVE", "ACTIVE", "LEGAL", "GUERRILLA", "NONE"]);
+export const borderKindSchema = z.enum([
+  "COAST",
+  "INACTIVE",
+  "ACTIVE",
+  "LEGAL",
+  "GUERRILLA",
+  "NONE",
+]);
 export type BorderKind = z.infer<typeof borderKindSchema>;
+
+export const borderLayerKindSchema = z.enum(["COAST", "LEGAL", "ACTIVE", "INACTIVE"]);
+export type BorderLayerKind = z.infer<typeof borderLayerKindSchema>;
 
 export const borderClassificationSchema = z.object({
   sourceColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
@@ -23,19 +33,41 @@ export const borderClassificationsSchema = z
 export type BorderClassification = z.infer<typeof borderClassificationSchema>;
 
 export const BORDER_KIND_LABELS: Record<BorderKind, string> = {
-  INACTIVE: "미활성 전선",
-  ACTIVE: "활성 전선",
-  LEGAL: "국제법적 국경",
+  COAST: "해안선",
+  INACTIVE: "교착 국경선",
+  ACTIVE: "전쟁 국경선",
+  LEGAL: "국경선",
   GUERRILLA: "게릴라 전선",
   NONE: "국경 없음",
 };
 
 export const DEFAULT_BORDER_DISPLAY_COLORS: Record<Exclude<BorderKind, "NONE">, string> = {
+  COAST: "#111827",
   INACTIVE: "#7D8794",
   ACTIVE: "#F04444",
   LEGAL: "#F5F5F5",
   GUERRILLA: "#F2B84B",
 };
+
+export const BORDER_LAYER_LABELS: Record<BorderLayerKind, string> = {
+  COAST: "해안선",
+  LEGAL: "국경선",
+  ACTIVE: "전쟁 국경선",
+  INACTIVE: "교착 국경선",
+};
+
+export const DEFAULT_BORDER_LAYER_COLORS: Record<BorderLayerKind, string> = {
+  COAST: DEFAULT_BORDER_DISPLAY_COLORS.COAST,
+  LEGAL: DEFAULT_BORDER_DISPLAY_COLORS.LEGAL,
+  ACTIVE: DEFAULT_BORDER_DISPLAY_COLORS.ACTIVE,
+  INACTIVE: DEFAULT_BORDER_DISPLAY_COLORS.INACTIVE,
+};
+
+export function borderLayerKind(kind: BorderKind): BorderLayerKind | null {
+  if (kind === "NONE") return null;
+  if (kind === "GUERRILLA") return "ACTIVE";
+  return kind;
+}
 
 export function quantizedPixelHex(data: Uint8Array, offset: number) {
   return rgbToHex([data[offset] & 0xf8, data[offset + 1] & 0xf8, data[offset + 2] & 0xf8]);
@@ -78,7 +110,33 @@ export function applyBorderClassifications(
   return output;
 }
 
+export function applyBorderLayerSettings(
+  base: Uint8Array,
+  rows: BorderClassification[],
+  visibleLayers: Iterable<BorderLayerKind>,
+  colors: Record<BorderLayerKind, string>,
+) {
+  const output = new Uint8Array(base.length);
+  const visible = new Set(visibleLayers);
+  const palette = new Map(
+    classificationPalette(rows).map((row) => [row.sourceColor, borderLayerKind(row.kind)] as const),
+  );
+  const displayRgbs = Object.fromEntries(
+    Object.entries(colors).map(([kind, color]) => [kind, parseHexColor(color)!]),
+  ) as Record<BorderLayerKind, Rgb>;
+
+  for (let offset = 0; offset < base.length; offset += 4) {
+    const layer = palette.get(quantizedPixelHex(base, offset));
+    if (!layer || !visible.has(layer)) continue;
+    const display = displayRgbs[layer];
+    output[offset] = display[0];
+    output[offset + 1] = display[1];
+    output[offset + 2] = display[2];
+    output[offset + 3] = 255;
+  }
+  return output;
+}
+
 export function borderSourceRgbs(rows: BorderClassification[]): Rgb[] {
   return classificationPalette(rows).map((row) => row.sourceRgb);
 }
-

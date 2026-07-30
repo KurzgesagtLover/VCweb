@@ -260,6 +260,7 @@ export function TnoDiplomacyPanel({
   loading,
   turnOpen,
   inboxHref,
+  onOpenInbox,
   onClose,
 }: {
   selected: { id: string; name: string; code: string; color: string; isAi: boolean };
@@ -267,7 +268,8 @@ export function TnoDiplomacyPanel({
   detail: DiplomacyDetail | null;
   loading: boolean;
   turnOpen: boolean;
-  inboxHref: string;
+  inboxHref?: string;
+  onOpenInbox?: () => void;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<"DIPLOMACY" | "DETAIL">("DIPLOMACY");
@@ -291,6 +293,13 @@ export function TnoDiplomacyPanel({
 
   const rulingParty = parties.find((party) => party.isGovernment) ?? parties[0] ?? null;
   const spirits = (detail?.orientation.interests ?? []).slice(0, 5);
+  const pendingTotal = detail ? detail.pending.incoming + detail.pending.outgoing : 0;
+  const inboxLabel = (
+    <>
+      제안함 열기
+      {pendingTotal > 0 && <b>{pendingTotal}</b>}
+    </>
+  );
 
   function availability(item: DiplomaticAction) {
     if (!turnOpen) return { ok: false, reason: "제출 기간이 아닙니다." };
@@ -614,12 +623,15 @@ export function TnoDiplomacyPanel({
                 </div>
               </div>
 
-              <a className="tno-footer-button" href={inboxHref}>
-                제안함 열기
-                {detail && detail.pending.incoming + detail.pending.outgoing > 0 && (
-                  <b>{detail.pending.incoming + detail.pending.outgoing}</b>
-                )}
-              </a>
+              {onOpenInbox ? (
+                <button type="button" className="tno-footer-button" onClick={onOpenInbox}>
+                  {inboxLabel}
+                </button>
+              ) : (
+                <a className="tno-footer-button" href={inboxHref ?? "#diplomacy-inbox"}>
+                  {inboxLabel}
+                </a>
+              )}
             </div>
 
             <div className="tno-action-list">

@@ -132,6 +132,9 @@ export const diplomaticMessageStatus = pgEnum("diplomatic_message_status", [
   "SENT",
   "REJECTED",
 ]);
+export const superEventStatus = pgEnum("super_event_status", ["DRAFT", "BROADCAST", "ARCHIVED"]);
+export const superEventAudience = pgEnum("super_event_audience", ["ALL", "COUNTRY"]);
+
 export const chatChannelType = pgEnum("chat_channel_type", ["CAMPAIGN", "COUNTRY", "ANNOUNCEMENT"]);
 export const moderationActionType = pgEnum("moderation_action_type", [
   "DELETE_MESSAGE",

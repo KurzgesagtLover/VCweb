@@ -7,7 +7,7 @@ import {
 } from "@/src/db/queries/chat";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { ChatWorkspace } from "@/src/ui/chat-workspace";
-import { PageHead } from "@/src/ui/page-head";
+import { TnoReadout, TnoWindow } from "@/src/ui/tno-frame";
 
 export const metadata = { title: "채팅" };
 
@@ -32,22 +32,28 @@ export default async function ChatPage({
     getActiveChatTimeout(session.user.id),
   ]);
   return (
-    <div className="section-stack">
-      <PageHead
-        eyebrow="COMMUNICATIONS"
-        title="채팅"
-        description="캠페인과 국가 채널의 대화를 확인합니다."
-      />
-      <ChatWorkspace
-        basePath="/chat"
-        role={session.user.role as Role}
-        countryId={context.country.id}
-        channels={channels}
-        selected={selected}
-        page={page}
-        replyToId={query.reply}
-        timeoutRemainingMs={timeout.remainingMs}
-      />
-    </div>
+    <TnoWindow
+      title="통신망"
+      readout={
+        <>
+          <TnoReadout label="채널" value={`${channels.length}개`} />
+          <TnoReadout label="현재" value={selected.name} />
+          <TnoReadout label="발신" value={timeout.remainingMs > 0 ? "차단 중" : "정상"} />
+        </>
+      }
+    >
+      <div className="tno-chat-slot">
+        <ChatWorkspace
+          basePath="/chat"
+          role={session.user.role as Role}
+          countryId={context.country.id}
+          channels={channels}
+          selected={selected}
+          page={page}
+          replyToId={query.reply}
+          timeoutRemainingMs={timeout.remainingMs}
+        />
+      </div>
+    </TnoWindow>
   );
 }

@@ -15,6 +15,7 @@ import {
 import { GLOBAL_MAP_H3_RESOLUTION } from "@/src/domain/map/grid";
 import { detectMapColors, matchCountryColor, parseHexColor } from "@/src/domain/map/image-colors";
 import { assertMapRevision } from "@/src/domain/map/revision";
+import { createRasterPreviewFromRaw } from "@/src/domain/map/raster-preview";
 import { actionRateLimiter } from "@/src/services/rate-limit";
 
 export const runtime = "nodejs";
@@ -87,13 +88,19 @@ export async function POST(request: Request) {
 
   const detected = detectMapColors(decoded.data, width, height, channels);
   if (mode === "analyze") {
-    const png = await sharp(fileBuffer).png().toBuffer();
+    const [png, preview] = await Promise.all([
+      sharp(fileBuffer).png().toBuffer(),
+      createRasterPreviewFromRaw(decoded.data, width, height),
+    ]);
     const [raster] = await db
       .insert(mapRasters)
       .values({
         mapId,
         campaignId,
         imageData: png,
+        previewImageData: preview.data,
+        previewWidth: preview.width,
+        previewHeight: preview.height,
         contentType: "image/png",
         width,
         height,
@@ -103,6 +110,9 @@ export async function POST(request: Request) {
         target: mapRasters.mapId,
         set: {
           imageData: png,
+          previewImageData: preview.data,
+          previewWidth: preview.width,
+          previewHeight: preview.height,
           contentType: "image/png",
           width,
           height,

@@ -4,7 +4,9 @@ import { getSession } from "@/src/auth/session";
 import { db } from "@/src/db";
 import { auditLogs, campaignMaps, mapRasterBorderLayers, mapRasters } from "@/src/db/schema";
 import { applyBorderClassifications, borderSourceRgbs } from "@/src/domain/map/border-palette";
+import { isMapProjection, type MapProjection } from "@/src/domain/map/projection";
 import { removeRasterBorders } from "@/src/domain/map/raster-territory";
+import { createRasterPreview } from "@/src/domain/map/raster-preview";
 import { actionRateLimiter } from "@/src/services/rate-limit";
 
 export const runtime = "nodejs";
@@ -29,6 +31,10 @@ export async function POST(request: Request) {
   const campaignId = String(formData.get("campaignId") ?? "");
   const mapId = String(formData.get("mapId") ?? "");
   const mode = formData.get("mode") === "save" ? "save" : "upload";
+  const requestedProjection = formData.get("projection");
+  const projection: MapProjection | null = isMapProjection(requestedProjection)
+    ? requestedProjection
+    : null;
   if (!(file instanceof File) || file.size === 0 || file.size > 100 * 1024 * 1024) {
     return Response.json({ error: "100MB 이하 이미지 파일을 선택하세요." }, { status: 400 });
   }
@@ -51,6 +57,7 @@ export async function POST(request: Request) {
   let png: Buffer;
   let borderlessPng: Buffer | null = null;
   let renderedBorderData: Buffer | null = null;
+  let preview: Awaited<ReturnType<typeof createRasterPreview>>;
   let width = 0;
   let height = 0;
   let sourceWidth = 0;
@@ -73,11 +80,14 @@ export async function POST(request: Request) {
       throw new Error("TOO_LARGE");
     }
 
-    png = await source
-      .resize(width, height, { fit: "fill", kernel: sharp.kernel.nearest })
-      .ensureAlpha()
-      .png({ compressionLevel: 9 })
-      .toBuffer();
+    [png, preview] = await Promise.all([
+      source
+        .resize(width, height, { fit: "fill", kernel: sharp.kernel.nearest })
+        .ensureAlpha()
+        .png({ compressionLevel: 9 })
+        .toBuffer(),
+      createRasterPreview(input),
+    ]);
     if (mode === "save" && borderLayer) {
       const decoded = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
       const borderlessRaw = removeRasterBorders(
@@ -119,9 +129,13 @@ export async function POST(request: Request) {
       campaignId,
       imageData: png,
       borderlessImageData: borderlessPng,
+      previewImageData: preview.data,
+      previewWidth: preview.width,
+      previewHeight: preview.height,
       contentType: "image/png",
       width,
       height,
+      projection: projection ?? "EQUIRECTANGULAR",
       updatedBy: session.user.id,
     })
     .onConflictDoUpdate({
@@ -129,9 +143,13 @@ export async function POST(request: Request) {
       set: {
         imageData: png,
         borderlessImageData: borderlessPng,
+        previewImageData: preview.data,
+        previewWidth: preview.width,
+        previewHeight: preview.height,
         contentType: "image/png",
         width,
         height,
+        ...(projection ? { projection } : {}),
         revision: sql`${mapRasters.revision} + 1`,
         updatedBy: session.user.id,
         updatedAt: new Date(),
@@ -164,6 +182,7 @@ export async function POST(request: Request) {
       width,
       height,
       pixelExpansion: mode === "upload" ? 4 : 1,
+      projection: projection ?? undefined,
       rasterRevision: raster.revision,
     },
     reason: mode === "upload" ? "평면 픽셀 지도 2×2 최근접 확장" : "평면 픽셀 지도 편집 저장",

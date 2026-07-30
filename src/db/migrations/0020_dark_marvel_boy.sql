@@ -1,0 +1,1 @@
+ALTER TABLE "map_rasters" ADD COLUMN "projection" text DEFAULT 'EQUIRECTANGULAR' NOT NULL;

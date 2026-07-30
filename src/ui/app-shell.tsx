@@ -4,39 +4,42 @@ import { logoutAction } from "@/src/actions/auth";
 import type { AppSession } from "@/src/auth/auth";
 import { db } from "@/src/db";
 import { notifications } from "@/src/db/schema";
+import { getPendingSuperEvents } from "@/src/db/queries/superevents";
 import { turnStatusLabel } from "@/src/domain/display-labels";
 import {
   adjudicationRealDayInterval,
   formatSeoulSchedule,
   nextTurnDeadline,
 } from "@/src/domain/turn/schedule";
+import { NavRail } from "./nav-rail";
 import { NotificationCenter } from "./notification-center";
+import { SuperEventBroadcast } from "./superevent-broadcast";
 
 type Context = {
   campaign: {
+    id: string;
     name: string;
     gameDaysPerRealDay: number;
     adjudicationIntervalGameDays: number;
     turnCloseHour: number;
     turnCloseMinute: number;
   };
-  country: { name: string; color: string } | null;
+  country: { id: string; name: string; color: string } | null;
   turn: { sequence: number; gameDateEnd: string; status: string; deadlineAt: Date | null } | null;
 };
 
 const playerNav = [
-  ["세계관", "/world", "◐"],
-  ["대시보드", "/dashboard", "▦"],
-  ["국가 개요", "/country/overview", "◈"],
+  ["외교·지도", "/diplomacy", "◍"],
+  ["국가 브리핑", "/dashboard", "▦"],
+  ["정치", "/country/politics", "◇"],
+  ["경제", "/country/economy", "▥"],
+  ["인문", "/country/society", "◎"],
   ["역사·지리", "/country/history", "⌁"],
   ["국토", "/country/territory", "⬢"],
-  ["인문", "/country/society", "◎"],
-  ["경제", "/country/economy", "▥"],
-  ["정치", "/country/politics", "◇"],
   ["연구", "/country/research", "⌬"],
   ["사건", "/events", "!"],
   ["연재", "/submissions", "✎"],
-  ["외교·지도", "/diplomacy", "⬡"],
+  ["세계관", "/world", "◐"],
   ["채팅", "/chat", "◌"],
 ] as const;
 
@@ -49,6 +52,7 @@ const adminNav = [
   ["정치 원장", "/admin/politics", "◇"],
   ["판정 검토", "/admin/submissions", "✎"],
   ["사건·야당", "/admin/events", "!"],
+  ["슈퍼이벤트", "/admin/superevents", "◉"],
   ["지도 편집", "/admin/map", "⬡"],
   ["행정구역 편집", "/admin/territory", "⬢"],
   ["외교 검토", "/admin/diplomacy", "◎"],
@@ -74,7 +78,7 @@ export async function AppShell({
   mode?: "player" | "admin";
   children: React.ReactNode;
 }) {
-  const [notificationRows, unreadRows] = await Promise.all([
+  const [notificationRows, unreadRows, pendingSuperEvents] = await Promise.all([
     db.query.notifications.findMany({
       where: eq(notifications.userId, session.user.id),
       orderBy: [desc(notifications.createdAt)],
@@ -84,6 +88,11 @@ export async function AppShell({
       .select({ count: sql<number>`count(*)::int` })
       .from(notifications)
       .where(and(eq(notifications.userId, session.user.id), isNull(notifications.readAt))),
+    getPendingSuperEvents({
+      campaignId: context.campaign.id,
+      userId: session.user.id,
+      countryId: context.country?.id ?? null,
+    }),
   ]);
   const nav =
     mode === "admin" ? (session.user.role === "ADMIN" ? adminNav : moderatorNav) : playerNav;
@@ -93,7 +102,7 @@ export async function AppShell({
       style={{ "--country": context.country?.color ?? "#5aa5b4" } as React.CSSProperties}
     >
       <header className="topbar">
-        <Link className="brand" href={mode === "admin" ? "/admin" : "/dashboard"}>
+        <Link className="brand" href={mode === "admin" ? "/admin" : "/diplomacy"}>
           <span className="brand-mark" aria-hidden="true" />
           NEXUS
         </Link>
@@ -157,35 +166,20 @@ export async function AppShell({
         </div>
       </header>
       <aside className="sidebar">
-        <div className="sidebar-section">
-          {mode === "admin"
-            ? session.user.role === "ADMIN"
-              ? "ADMIN CONTROL"
-              : "MODERATION"
-            : "NATIONAL DESK"}
-        </div>
-        <nav aria-label={mode === "admin" ? "관리 메뉴" : "국가 운영 메뉴"}>
-          {nav.map(([label, href, glyph]) => (
-            <Link className="nav-link" href={href} key={href}>
-              <span className="nav-glyph" aria-hidden="true">
-                {glyph}
-              </span>
-              {label}
-            </Link>
-          ))}
-        </nav>
-        {session.user.role === "ADMIN" && mode === "player" && (
-          <>
-            <div className="sidebar-section">SYSTEM</div>
-            <Link className="nav-link" href="/admin">
-              <span className="nav-glyph">⚙</span>관리자 화면
-            </Link>
-          </>
-        )}
+        <NavRail
+          label={mode === "admin" ? "관리 메뉴" : "국가 운영 메뉴"}
+          items={nav.map(([label, href, glyph]) => ({ label, href, glyph }))}
+          systemItem={
+            session.user.role === "ADMIN" && mode === "player"
+              ? { label: "관리자 화면", href: "/admin", glyph: "⚙" }
+              : undefined
+          }
+        />
       </aside>
       <main className="content" id="main-content" tabIndex={-1}>
         {children}
       </main>
+      <SuperEventBroadcast initialItems={pendingSuperEvents} />
     </div>
   );
 }

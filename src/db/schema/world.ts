@@ -179,9 +179,13 @@ export const mapRasters = pgTable("map_rasters", {
     .references(() => campaigns.id, { onDelete: "restrict" }),
   imageData: binaryData("image_data").notNull(),
   borderlessImageData: binaryData("borderless_image_data"),
+  previewImageData: binaryData("preview_image_data"),
+  previewWidth: integer("preview_width"),
+  previewHeight: integer("preview_height"),
   contentType: text("content_type").notNull().default("image/png"),
   width: integer("width").notNull(),
   height: integer("height").notNull(),
+  projection: text("projection").notNull().default("EQUIRECTANGULAR"),
   revision: integer("revision").notNull().default(1),
   updatedBy: text("updated_by")
     .notNull()
@@ -201,7 +205,7 @@ export const mapRasterBorderLayers = pgTable("map_raster_border_layers", {
     .$type<
       Array<{
         sourceColor: string;
-        kind: "INACTIVE" | "ACTIVE" | "LEGAL" | "GUERRILLA" | "NONE";
+        kind: "COAST" | "INACTIVE" | "ACTIVE" | "LEGAL" | "GUERRILLA" | "NONE";
         displayColor: string;
       }>
     >()

@@ -6,7 +6,7 @@ async function login(page: import("@playwright/test").Page, email: string) {
   await page.goto("/login");
   await page.getByLabel("이메일").fill(email);
   await page.getByLabel("비밀번호").fill(password);
-  await page.getByRole("button", { name: "로그인" }).click();
+  await page.getByRole("button", { name: "접속" }).click();
 }
 
 test("관리자는 국가 신청 대신 운영 화면으로 이동한다", async ({ page }) => {

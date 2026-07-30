@@ -4,7 +4,6 @@ import { requireSession } from "@/src/auth/session";
 import { db } from "@/src/db";
 import {
   countryProfileRevisions,
-  mapRasterBorderLayers,
   mapRasterColorAssignments,
   mapRasters,
   politicalSnapshots,
@@ -13,7 +12,8 @@ import {
 import { getDiplomacyDesk } from "@/src/db/queries/diplomacy";
 import { getPrimaryCampaignMap } from "@/src/db/queries/maps";
 import { getViewerContext } from "@/src/db/queries/viewer";
-import { PixelDiplomacyMap } from "@/src/ui/pixel-diplomacy-map";
+import { parseMapProjection } from "@/src/domain/map/projection";
+import { GlobeMap } from "@/src/ui/globe-map";
 
 export const metadata = { title: "외교·세계 지도" };
 
@@ -43,75 +43,60 @@ export default async function DiplomacyPage() {
   if (!context.campaign || !context.country || !context.turn) return null;
   const primaryMap = await getPrimaryCampaignMap(context.campaign.id);
   if (!primaryMap) return null;
-  const [desk, raster, colorAssignments, borderLayer, ownProfile, ownPolitical] = await Promise.all(
-    [
-      getDiplomacyDesk(context.campaign.id, context.country.id),
-      db.query.mapRasters.findFirst({
-        where: eq(mapRasters.mapId, primaryMap.id),
-        columns: { revision: true, width: true, height: true },
-      }),
-      db.query.mapRasterColorAssignments.findMany({
-        where: eq(mapRasterColorAssignments.mapId, primaryMap.id),
-        columns: { colorHex: true, countryId: true },
-      }),
-      db.query.mapRasterBorderLayers.findFirst({
-        where: eq(mapRasterBorderLayers.mapId, primaryMap.id),
-        columns: { revision: true },
-      }),
-      context.country.currentProfileRevisionId
-        ? db.query.countryProfileRevisions.findFirst({
-            where: eq(countryProfileRevisions.id, context.country.currentProfileRevisionId),
-            columns: { flag: true },
-          })
-        : null,
-      db
-        .select({ snapshot: politicalSnapshots })
-        .from(politicalSnapshots)
-        .innerJoin(turns, eq(politicalSnapshots.turnId, turns.id))
-        .where(eq(politicalSnapshots.countryId, context.country.id))
-        .orderBy(desc(turns.sequence))
-        .limit(1),
-    ],
-  );
+  const [desk, raster, colorAssignments, ownProfile, ownPolitical] = await Promise.all([
+    getDiplomacyDesk(context.campaign.id, context.country.id),
+    db.query.mapRasters.findFirst({
+      where: eq(mapRasters.mapId, primaryMap.id),
+      columns: { revision: true, projection: true },
+    }),
+    db.query.mapRasterColorAssignments.findMany({
+      where: eq(mapRasterColorAssignments.mapId, primaryMap.id),
+      columns: { colorHex: true, countryId: true },
+    }),
+    context.country.currentProfileRevisionId
+      ? db.query.countryProfileRevisions.findFirst({
+          where: eq(countryProfileRevisions.id, context.country.currentProfileRevisionId),
+          columns: { flag: true },
+        })
+      : null,
+    db
+      .select({ snapshot: politicalSnapshots })
+      .from(politicalSnapshots)
+      .innerJoin(turns, eq(politicalSnapshots.turnId, turns.id))
+      .where(eq(politicalSnapshots.countryId, context.country.id))
+      .orderBy(desc(turns.sequence))
+      .limit(1),
+  ]);
   const countryById = new Map(desk.countries.map((country) => [country.id, country]));
   return (
-    <div className="diplomacy-page">
-      <div className="diplomacy-map-bleed">
-        <PixelDiplomacyMap
-          mapId={primaryMap.id}
-          mapRevision={primaryMap.revision}
-          hexResolution={primaryMap.hexResolution}
-          adaptiveResolution={primaryMap.adaptiveResolution}
-          rasterRevision={raster?.revision ?? 0}
-          rasterWidth={raster?.width ?? 16384}
-          rasterHeight={raster?.height ?? 8192}
-          borderRevision={borderLayer?.revision ?? 0}
-          colorAssignments={colorAssignments}
-          countries={desk.countries.map(({ id, name, code, color, isAi }) => ({
-            id,
-            name,
-            code,
-            color,
-            isAi,
-          }))}
-          ownCountryId={context.country.id}
-          ownCountry={{
-            name: context.country.name,
-            code: context.country.code,
-            color: context.country.color,
-            flag: ownProfile?.flag ?? "⚑",
-            stability: ownPolitical[0]?.snapshot.stability ?? null,
-          }}
-          relations={desk.relations.map(({ toCountryId, score, tags }) => ({
-            toCountryId,
-            score,
-            tags,
-          }))}
-          turnOpen={context.turn.status === "DRAFT"}
-          divisionRevision={primaryMap.administrativeDivisionRevision}
-        />
-      </div>
-
+    <GlobeMap
+      mapId={primaryMap.id}
+      rasterRevision={raster?.revision ?? 0}
+      projection={parseMapProjection(raster?.projection)}
+      colorAssignments={colorAssignments}
+      countries={desk.countries.map(({ id, name, code, color, isAi }) => ({
+        id,
+        name,
+        code,
+        color,
+        isAi,
+      }))}
+      ownCountryId={context.country.id}
+      ownCountry={{
+        name: context.country.name,
+        code: context.country.code,
+        color: context.country.color,
+        flag: ownProfile?.flag ?? "⚑",
+        stability: ownPolitical[0]?.snapshot.stability ?? null,
+      }}
+      relations={desk.relations.map(({ toCountryId, score, tags }) => ({
+        toCountryId,
+        score,
+        tags,
+      }))}
+      turnOpen={context.turn.status === "DRAFT"}
+      inboxCount={desk.records.length}
+    >
       <section className="diplomacy-inbox" id="diplomacy-inbox">
         <header className="diplomacy-inbox-head">
           <h2>외교 전문 기록</h2>
@@ -188,6 +173,6 @@ export default async function DiplomacyPage() {
           </div>
         )}
       </section>
-    </div>
+    </GlobeMap>
   );
 }

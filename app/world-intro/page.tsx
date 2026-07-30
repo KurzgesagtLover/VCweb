@@ -25,7 +25,7 @@ export default async function WorldIntroPage() {
     context.campaign.loreVersion < 1 ||
     (view && view.version >= context.campaign.loreVersion)
   ) {
-    redirect(context.assignment ? "/dashboard" : "/apply");
+    redirect(context.assignment ? "/diplomacy" : "/apply");
   }
 
   return (

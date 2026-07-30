@@ -14,7 +14,7 @@ export default async function ApplyPage() {
   if (session.user.role === "ADMIN") redirect("/admin");
   if (session.user.role === "MODERATOR") redirect("/admin/moderation");
   const context = await getViewerContext(session.user.id);
-  if (context.assignment) redirect("/dashboard");
+  if (context.assignment) redirect("/diplomacy");
   const application = context.campaign
     ? await db.query.countryApplications.findFirst({
         where: and(

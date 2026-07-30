@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { replaceOfficeHolderAction } from "@/src/actions/government";
 import { requireSession } from "@/src/auth/session";
 import { getCountryLedger } from "@/src/db/queries/country";
@@ -10,14 +9,21 @@ import {
   GovernmentPersonnelCarousel,
   type PersonnelBranch,
 } from "@/src/ui/government-personnel-carousel";
-import { DataList, MetricCard } from "@/src/ui/metric-card";
-import { PageHead } from "@/src/ui/page-head";
-import { TrendBars } from "@/src/ui/trend-bars";
+import {
+  TnoBanner,
+  TnoGauges,
+  TnoHeadline,
+  TnoPlate,
+  TnoReadout,
+  TnoStats,
+  TnoTrend,
+  TnoWindow,
+} from "@/src/ui/tno-frame";
 
 export const metadata = { title: "정치" };
 
 type PoliticsTab = "overview" | "personnel" | "assembly" | "replace";
-const tabs: Array<[PoliticsTab, string]> = [
+const TABS: Array<[PoliticsTab, string]> = [
   ["overview", "정치 현황"],
   ["personnel", "권력기관 인사"],
   ["assembly", "국회·정당"],
@@ -25,6 +31,7 @@ const tabs: Array<[PoliticsTab, string]> = [
 ];
 
 type Structure = Awaited<ReturnType<typeof getGovernmentStructure>>;
+type Ledger = NonNullable<Awaited<ReturnType<typeof getCountryLedger>>>;
 
 function PersonnelView({ structure }: { structure: Structure }) {
   const branches = ["EXECUTIVE", "JUDICIAL", "LEGISLATIVE"] as const;
@@ -47,29 +54,44 @@ function PersonnelView({ structure }: { structure: Structure }) {
       ),
   }));
 
-  return <GovernmentPersonnelCarousel branches={branchData} />;
+  return (
+    <div className="tno-personnel-slot">
+      <GovernmentPersonnelCarousel branches={branchData} />
+    </div>
+  );
 }
 
-function AssemblyView({
-  ledger,
-}: {
-  ledger: NonNullable<Awaited<ReturnType<typeof getCountryLedger>>>;
-}) {
+function AssemblyView({ ledger }: { ledger: Ledger }) {
   const parties = ledger.parties
     .map(({ party, snapshot }) => ({ party, snapshot, seats: snapshot?.seats ?? 0 }))
     .sort((a, b) => b.seats - a.seats);
   const totalSeats = parties.reduce((sum, item) => sum + item.seats, 0);
+  const governing = parties.filter(({ snapshot }) => snapshot?.isGovernment);
+  const governingSeats = governing.reduce((sum, item) => sum + item.seats, 0);
+
   return (
-    <div className="section-stack">
-      <section className="panel">
-        <div className="panel-head">
-          <h2>국회 의석 구성</h2>
-          <span className="status-pill">총 {totalSeats}석</span>
-        </div>
+    <>
+      <div className="tno-headline-row">
+        <TnoHeadline label="총 의석" value={`${totalSeats}석`} meta={`${parties.length}개 정당`} />
+        <TnoHeadline
+          label="여당 의석"
+          value={`${governingSeats}석`}
+          meta={totalSeats ? `${((governingSeats / totalSeats) * 100).toFixed(1)}%` : "—"}
+          tone={totalSeats && governingSeats * 2 > totalSeats ? "good" : "bad"}
+        />
+        <TnoHeadline label="여당" value={ledger.political?.rulingParty ?? "—"} meta="집권 세력" />
+        <TnoHeadline
+          label="제1야당"
+          value={ledger.political?.oppositionParty ?? "—"}
+          meta="원내 최대 야당"
+        />
+      </div>
+
+      <TnoPlate title="국회 의석 구성" wide>
         {totalSeats ? (
           <>
             <div
-              className="seat-composition"
+              className="tno-seatbar"
               role="img"
               aria-label={parties.map(({ party, seats }) => `${party.name} ${seats}석`).join(", ")}
             >
@@ -84,156 +106,245 @@ function AssemblyView({
                     }}
                   />
                 ))}
-              <i aria-hidden="true" />
             </div>
-            <div className="seat-legend">
+            <div className="tno-party-list">
+              <div className="tno-party-head">
+                <span>정당</span>
+                <span>구분</span>
+                <b>의석</b>
+                <b>지지율</b>
+                <b>조직력</b>
+                <b>정치자금</b>
+              </div>
               {parties.map(({ party, snapshot, seats }) => (
-                <div key={party.id}>
-                  <span style={{ backgroundColor: party.color }} />
-                  <strong>{party.name}</strong>
-                  <em>{seats}석</em>
-                  <small>{snapshot?.isGovernment ? "여당" : "야당"}</small>
+                <div className="tno-party-row" key={party.id}>
+                  <span className="tno-party-name">
+                    <i style={{ backgroundColor: party.color }} />
+                    {party.name}
+                  </span>
+                  <span className={snapshot?.isGovernment ? "tno-party-gov" : "tno-party-opp"}>
+                    {snapshot?.isGovernment ? "여당" : "야당"}
+                  </span>
+                  <b>{seats}</b>
+                  <b>{formatPercent(snapshot?.support)}</b>
+                  <b>{snapshot?.organization ?? "—"}</b>
+                  <b>{formatMoney(snapshot?.funds, "")}</b>
                 </div>
               ))}
             </div>
           </>
         ) : (
-          <div className="empty-state">의석 데이터가 없습니다.</div>
+          <p>의석 데이터가 없습니다.</p>
         )}
-      </section>
-      <section className="panel">
-        <div className="panel-head">
-          <h2>정당 목록</h2>
-          <span className="status-pill">{parties.length}개 정당</span>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>정당</th>
-                <th>구분</th>
-                <th className="numeric">의석</th>
-                <th className="numeric">지지율</th>
-                <th className="numeric">조직력</th>
-                <th className="numeric">자금</th>
-                <th>주요 인물</th>
-              </tr>
-            </thead>
-            <tbody>
-              {parties.map(({ party, snapshot, seats }) => (
-                <tr key={party.id}>
-                  <td>
-                    <span className="party-name">
-                      <i style={{ backgroundColor: party.color }} />
-                      {party.name}
-                    </span>
-                  </td>
-                  <td>{snapshot?.isGovernment ? "여당" : "야당"}</td>
-                  <td className="numeric">{seats}</td>
-                  <td className="numeric">{formatPercent(snapshot?.support)}</td>
-                  <td className="numeric">{snapshot?.organization ?? "—"}</td>
-                  <td className="numeric">{formatMoney(snapshot?.funds, "정치자금")}</td>
-                  <td>{party.notablePeople.join(" · ") || "—"}</td>
-                </tr>
+      </TnoPlate>
+
+      <TnoPlate title="정당 주요 인물" wide>
+        {parties.some(({ party }) => party.notablePeople.length) ? (
+          <ul className="tno-entity-list">
+            {parties
+              .filter(({ party }) => party.notablePeople.length)
+              .map(({ party }) => (
+                <li key={party.id}>
+                  <span>{party.name}</span>
+                  <em>{party.notablePeople.join(" · ")}</em>
+                  <b>{party.notablePeople.length}인</b>
+                </li>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
+          </ul>
+        ) : (
+          <p>등록된 정당 인물이 없습니다.</p>
+        )}
+      </TnoPlate>
+    </>
   );
 }
 
 function ReplacementView({ structure, updated }: { structure: Structure; updated: boolean }) {
   const officeById = new Map(structure.offices.map(({ office }) => [office.id, office]));
   return (
-    <div className="section-stack">
+    <>
       {updated && <p className="form-message success">새 인사와 초상화가 반영되었습니다.</p>}
-      <section className="panel">
-        <div className="panel-head">
-          <h2>인사 교체</h2>
-          <span className="eyebrow">PLAYER ACTION</span>
+      <div className="tno-two-column">
+        <TnoPlate title="인사 교체 명령">
+          {structure.offices.length ? (
+            <form
+              action={replaceOfficeHolderAction}
+              className="tno-form-stack"
+              encType="multipart/form-data"
+            >
+              <label>
+                교체 직책
+                <select name="officeSlot" required defaultValue="">
+                  <option value="" disabled>
+                    직책 선택
+                  </option>
+                  {structure.offices.flatMap(({ office }) =>
+                    Array.from({ length: office.seatCount }, (_, index) => (
+                      <option value={`${office.id}:${index + 1}`} key={`${office.id}:${index + 1}`}>
+                        {governmentBranchLabel(office.branch)} · {office.title}
+                        {office.seatCount > 1 ? ` ${index + 1}인` : ""}
+                      </option>
+                    )),
+                  )}
+                </select>
+              </label>
+              <label>
+                새 인사 이름
+                <input name="newHolderName" minLength={2} maxLength={80} required />
+              </label>
+              <label>
+                인사 교체 연재
+                <textarea name="narrative" minLength={80} maxLength={12000} rows={7} required />
+              </label>
+              <label>
+                초상화 파일
+                <input
+                  name="portrait"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  required
+                />
+              </label>
+              <div className="tno-form-actions">
+                <button type="submit">인사 교체 반영</button>
+              </div>
+            </form>
+          ) : (
+            <p>관리자가 직책 구조를 설정한 뒤 인사를 교체할 수 있습니다.</p>
+          )}
+        </TnoPlate>
+
+        <TnoPlate title={`최근 인사 기록 · ${structure.recentChanges.length}건`}>
+          {structure.recentChanges.length ? (
+            <div className="tno-history-list">
+              {structure.recentChanges.map((change) => {
+                const office = officeById.get(change.officeId);
+                return (
+                  <article key={change.id}>
+                    <header>
+                      <strong>
+                        {office?.title ?? "직책"}
+                        {office && office.seatCount > 1 ? ` ${change.slotNumber}인` : ""}
+                      </strong>
+                      <time>
+                        {new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" }).format(
+                          change.createdAt,
+                        )}
+                      </time>
+                    </header>
+                    <span>
+                      {change.previousHolderName ?? "공석"} → {change.newHolderName}
+                    </span>
+                    <p>{change.narrative}</p>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <p>아직 인사 교체 기록이 없습니다.</p>
+          )}
+        </TnoPlate>
+      </div>
+    </>
+  );
+}
+
+function OverviewView({ ledger }: { ledger: Ledger }) {
+  const p = ledger.political;
+  const politicalChanges = ledger.approvedChanges.filter((change) => change.domain === "POLITICS");
+
+  return (
+    <>
+      <div className="tno-headline-row">
+        <TnoHeadline
+          label="안정도"
+          value={p?.stability ?? "—"}
+          meta="0–100"
+          tone={p && p.stability < 40 ? "bad" : "good"}
+        />
+        <TnoHeadline
+          label="정권 지지도"
+          value={p?.governmentApproval ?? "—"}
+          meta="0–100"
+          tone={p && p.governmentApproval < 40 ? "bad" : undefined}
+        />
+        <TnoHeadline
+          label="정통성"
+          value={p?.legitimacy ?? "—"}
+          meta="0–100"
+          tone={p && p.legitimacy < 40 ? "bad" : undefined}
+        />
+        <TnoHeadline
+          label="사회 불안"
+          value={p?.unrest ?? "—"}
+          meta="낮을수록 안정"
+          tone={p && p.unrest > 55 ? "bad" : "good"}
+        />
+      </div>
+
+      <div className="tno-two-column">
+        <TnoPlate title="정치 계기판">
+          <TnoGauges
+            items={[
+              { label: "안정도", value: p?.stability ?? null },
+              { label: "정통성", value: p?.legitimacy ?? null },
+              { label: "정권 지지", value: p?.governmentApproval ?? null },
+              { label: "정책 지지", value: p?.policySupport ?? null },
+              { label: "행정 역량", value: p?.stateCapacity ?? null },
+              { label: "민주주의", value: p?.democracy ?? null },
+              { label: "사회 불안", value: p?.unrest ?? null, invert: true },
+              { label: "부패", value: p?.corruption ?? null, invert: true },
+            ]}
+          />
+        </TnoPlate>
+
+        <div className="tno-column-stack">
+          <TnoPlate title="정부 구성">
+            <TnoStats
+              columns={2}
+              items={[
+                { label: "정치체제", value: p?.governmentForm ?? "—" },
+                { label: "국가원수", value: p?.headOfState ?? "—" },
+                { label: "행정부 수반", value: p?.headOfGovernment ?? "—" },
+                { label: "의회 의장", value: p?.assemblySpeaker ?? "—" },
+                { label: "최고재판관", value: p?.chiefJustice ?? "—" },
+                { label: "여당", value: p?.rulingParty ?? "—" },
+              ]}
+            />
+          </TnoPlate>
+
+          <TnoPlate title="정권 지지도 추세">
+            <TnoTrend
+              rows={ledger.politicalTrend.map((row) => ({
+                label: `T${row.turnSequence}`,
+                value: row.snapshot.governmentApproval,
+              }))}
+            />
+          </TnoPlate>
         </div>
-        {structure.offices.length ? (
-          <form
-            action={replaceOfficeHolderAction}
-            className="form-stack"
-            encType="multipart/form-data"
-          >
-            <label>
-              교체 직책
-              <select name="officeSlot" required defaultValue="">
-                <option value="" disabled>
-                  직책 선택
-                </option>
-                {structure.offices.flatMap(({ office }) =>
-                  Array.from({ length: office.seatCount }, (_, index) => (
-                    <option value={`${office.id}:${index + 1}`} key={`${office.id}:${index + 1}`}>
-                      {governmentBranchLabel(office.branch)} · {office.title}
-                      {office.seatCount > 1 ? ` ${index + 1}인` : ""}
-                    </option>
-                  )),
-                )}
-              </select>
-            </label>
-            <label>
-              새 인사 이름
-              <input name="newHolderName" minLength={2} maxLength={80} required />
-            </label>
-            <label>
-              인사 교체 연재
-              <textarea name="narrative" minLength={80} maxLength={12000} required />
-            </label>
-            <label>
-              초상화 파일
-              <input
-                name="portrait"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                required
-              />
-            </label>
-            <button type="submit">인사 교체 반영</button>
-          </form>
+      </div>
+
+      <TnoPlate title="정치 승인 변경 이력" wide>
+        {politicalChanges.length ? (
+          <ul className="tno-entity-list">
+            {politicalChanges
+              .slice(-8)
+              .reverse()
+              .map((change) => (
+                <li key={change.id}>
+                  <span>{metricLabel(change.metric)}</span>
+                  <em>{change.reason}</em>
+                  <b>
+                    {String(change.beforeValue)} → {String(change.afterValue)}
+                  </b>
+                </li>
+              ))}
+          </ul>
         ) : (
-          <div className="empty-state">
-            관리자가 직책 구조를 설정한 뒤 인사를 교체할 수 있습니다.
-          </div>
+          <p>승인된 정치 지표 변경이 없습니다.</p>
         )}
-      </section>
-      <section className="panel">
-        <div className="panel-head">
-          <h2>최근 인사 기록</h2>
-          <span className="status-pill">{structure.recentChanges.length}건</span>
-        </div>
-        {structure.recentChanges.length ? (
-          <div className="personnel-history">
-            {structure.recentChanges.map((change) => {
-              const office = officeById.get(change.officeId);
-              return (
-                <article key={change.id}>
-                  <strong>
-                    {office?.title ?? "직책"}
-                    {office && office.seatCount > 1 ? ` ${change.slotNumber}인` : ""}
-                  </strong>
-                  <span>
-                    {change.previousHolderName ?? "공석"} → {change.newHolderName}
-                  </span>
-                  <p>{change.narrative}</p>
-                  <time>
-                    {new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" }).format(
-                      change.createdAt,
-                    )}
-                  </time>
-                </article>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="empty-state">아직 인사 교체 기록이 없습니다.</div>
-        )}
-      </section>
-    </div>
+      </TnoPlate>
+    </>
   );
 }
 
@@ -246,7 +357,7 @@ export default async function PoliticsPage({
   const context = await getViewerContext(session.user.id);
   if (!context.country) return null;
   const params = await searchParams;
-  const activeTab = tabs.some(([value]) => value === params.tab)
+  const activeTab: PoliticsTab = TABS.some(([value]) => value === params.tab)
     ? (params.tab as PoliticsTab)
     : "overview";
   const [ledger, structure] = await Promise.all([
@@ -254,91 +365,41 @@ export default async function PoliticsPage({
     getGovernmentStructure(context.country.id),
   ]);
   if (!ledger) return null;
-  const p = ledger.political;
+  const politics = ledger.political;
 
   return (
-    <div className="section-stack">
-      <PageHead
-        eyebrow="COUNTRY LEDGER / POLITICS"
-        title="정치 원장"
-        description="정부 구성과 의회 현황, 정치 지표를 확인합니다."
+    <TnoWindow
+      title="정치 원장"
+      readout={
+        <>
+          <TnoReadout label="여당" value={politics?.rulingParty ?? "—"} />
+          <TnoReadout label="안정" value={politics ? `${politics.stability}%` : "—"} />
+          <TnoReadout label="지지" value={politics ? `${politics.governmentApproval}%` : "—"} />
+        </>
+      }
+      tabs={TABS.map(([value, label]) => ({
+        label,
+        href: `/country/politics?tab=${value}`,
+        active: activeTab === value,
+      }))}
+    >
+      <TnoBanner
+        flag={ledger.profile?.flag ?? "⚑"}
+        name={ledger.country.name}
+        lines={[
+          politics?.governmentForm ?? ledger.profile?.governmentForm ?? "정체 미정",
+          `${politics?.headOfState ?? "국가원수 미정"} · 야당 ${politics?.oppositionParty ?? "미정"}`,
+        ]}
+        emblem={ledger.country.code}
+        color={ledger.country.color}
       />
-      <nav className="ledger-tabs politics-tabs" aria-label="정치 원장 메뉴" role="tablist">
-        {tabs.map(([value, label]) => (
-          <Link
-            key={value}
-            href={`/country/politics?tab=${value}`}
-            role="tab"
-            aria-selected={activeTab === value}
-            className={activeTab === value ? "active" : undefined}
-          >
-            {label}
-          </Link>
-        ))}
-      </nav>
 
-      {activeTab === "overview" && (
-        <div className="section-stack" role="tabpanel">
-          <section className="metric-grid">
-            <MetricCard label="정치체제" value={p?.governmentForm} />
-            <MetricCard label="국가원수" value={p?.headOfState} />
-            <MetricCard label="행정부 수반" value={p?.headOfGovernment ?? "—"} />
-            <MetricCard label="의회 의장" value={p?.assemblySpeaker ?? "—"} />
-            <MetricCard label="최고재판관" value={p?.chiefJustice ?? "—"} />
-            <MetricCard label="여당" value={p?.rulingParty} />
-            <MetricCard label="제1야당" value={p?.oppositionParty} />
-            <MetricCard label="안정도" value={p?.stability} meta="0–100" />
-            <MetricCard label="정부 지지도" value={p?.governmentApproval} meta="0–100" />
-            <MetricCard label="사회 불안" value={p?.unrest} meta="0–100 · 낮을수록 안정" />
-          </section>
-          <section className="panel">
-            <div className="panel-head">
-              <h2>최근 8턴 정부 지지도</h2>
-              <span className="eyebrow">APPROVAL INDEX</span>
-            </div>
-            <TrendBars
-              format="number"
-              rows={ledger.politicalTrend.map((row) => ({
-                label: `T${row.turnSequence}`,
-                value: String(row.snapshot.governmentApproval),
-              }))}
-            />
-          </section>
-          <section className="panel">
-            <div className="panel-head">
-              <h2>정치 세부 지표</h2>
-            </div>
-            <DataList
-              items={[
-                ["정통성", p?.legitimacy],
-                ["국가 역량", p?.stateCapacity],
-                ["부패", p?.corruption],
-                ["민주성", p?.democracy],
-              ]}
-            />
-          </section>
-          {ledger.approvedChanges.some((change) => change.domain === "POLITICS") && (
-            <section className="panel">
-              <div className="panel-head">
-                <h2>승인 변경 이력</h2>
-              </div>
-              <DataList
-                items={ledger.approvedChanges
-                  .filter((change) => change.domain === "POLITICS")
-                  .map((change) => [
-                    metricLabel(change.metric),
-                    `${String(change.beforeValue)} → ${String(change.afterValue)} · ${change.reason}`,
-                  ])}
-              />
-            </section>
-          )}
-        </div>
-      )}
+      {activeTab === "overview" && <OverviewView ledger={ledger} />}
       {activeTab === "personnel" && <PersonnelView structure={structure} />}
       {activeTab === "assembly" && <AssemblyView ledger={ledger} />}
       {activeTab === "replace" && (
         <ReplacementView structure={structure} updated={params.updated === "1"} />
       )}
-    </div>
+    </TnoWindow>
   );
 }

@@ -8,8 +8,8 @@ import { getCountryPolicyGoals, getCountrySubmissions } from "@/src/db/queries/s
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { SERIAL_CATEGORY_LABELS, type SerialCategory } from "@/src/domain/policy/metrics";
 import { metricLabel } from "@/src/domain/display-labels";
-import { PageHead } from "@/src/ui/page-head";
 import { PolicyCreateDialogs } from "@/src/ui/policy-create-dialogs";
+import { TnoHeadline, TnoPlate, TnoReadout, TnoWindow } from "@/src/ui/tno-frame";
 import { SubmissionEditor } from "@/src/ui/submission-editor";
 
 export const metadata = { title: "연재" };
@@ -58,38 +58,49 @@ export default async function SubmissionsPage() {
   const activeGoals = goals.filter((goal) => goal.status === "ACTIVE");
   const goalTypeLabel = context.country.economicSystem === "PLANNED" ? "국가계획" : "정책 목표";
   const activeSeries = records.filter(({ submission }) => submission.status !== "REJECTED");
+  const publishedSeries = activeSeries.filter(
+    ({ submission }) => submission.status === "PUBLISHED",
+  );
+  const averageAwareness = publishedSeries.length
+    ? publishedSeries.reduce((sum, { submission }) => sum + Number(submission.publicAwareness), 0) /
+      publishedSeries.length
+    : null;
 
   return (
-    <div className="section-stack">
-      <PageHead
-        eyebrow="POLICY SERIES"
-        title="연재"
-        description="정책 목표와 이를 달성하기 위한 연재 실행사항을 한눈에 확인합니다."
-        aside={
-          <div className="policy-page-actions">
-            <span className="status-pill">
-              T{context.turn.sequence} · {context.turn.status}
-            </span>
-            {editable && (
-              <PolicyCreateDialogs
-                economicSystem={context.country.economicSystem}
-                goals={activeGoals.map((goal) => ({ id: goal.id, name: goal.name }))}
-              />
-            )}
-          </div>
-        }
-      />
+    <TnoWindow
+      title="연재 사령부"
+      readout={
+        <>
+          <TnoReadout label="턴" value={`T${context.turn.sequence}`} />
+          <TnoReadout label="체제" value={editable ? "작성 가능" : "작성 마감"} />
+          <TnoReadout
+            label="체계"
+            value={context.country.economicSystem === "PLANNED" ? "계획경제" : "자유시장"}
+          />
+        </>
+      }
+    >
+      <div className="tno-headline-row">
+        <TnoHeadline label={goalTypeLabel} value={`${activeGoals.length}개`} meta="진행 중 목표" />
+        <TnoHeadline label="진행 연재" value={`${activeSeries.length}건`} meta="반려 제외" />
+        <TnoHeadline label="시행 중" value={`${publishedSeries.length}건`} meta="공개 집행" />
+        <TnoHeadline
+          label="평균 인지도"
+          value={averageAwareness === null ? "—" : `${averageAwareness.toFixed(1)}%`}
+          meta="시행 중 연재 기준"
+        />
+      </div>
 
-      <section className="policy-dashboard-section" aria-labelledby="active-policies-title">
-        <header className="policy-section-head">
-          <div>
-            <span className="eyebrow">
-              {context.country.economicSystem === "PLANNED" ? "PLANNED ECONOMY" : "FREE MARKET"}
-            </span>
-            <h2 id="active-policies-title">진행 중 정책</h2>
-          </div>
-          <span className="status-pill">{activeGoals.length}개 목표</span>
-        </header>
+      {editable && (
+        <div className="tno-action-bar">
+          <PolicyCreateDialogs
+            economicSystem={context.country.economicSystem}
+            goals={activeGoals.map((goal) => ({ id: goal.id, name: goal.name }))}
+          />
+        </div>
+      )}
+
+      <TnoPlate title={`진행 중 정책 · ${activeGoals.length}개 목표`} wide>
         {activeGoals.length > 0 ? (
           <div className="policy-goal-grid">
             {activeGoals.map((goal) => (
@@ -117,17 +128,9 @@ export default async function SubmissionsPage() {
             </p>
           </div>
         )}
-      </section>
+      </TnoPlate>
 
-      <section className="policy-dashboard-section" aria-labelledby="active-series-title">
-        <header className="policy-section-head">
-          <div>
-            <span className="eyebrow">ACTIVE SERIES</span>
-            <h2 id="active-series-title">진행 중 연재</h2>
-          </div>
-          <span className="status-pill">{activeSeries.length}건</span>
-        </header>
-
+      <TnoPlate title={`진행 중 연재 · ${activeSeries.length}건`} wide>
         {activeSeries.length === 0 ? (
           <div className="policy-empty-card">
             <span className="eyebrow">NO ACTIVE POLICY</span>
@@ -339,7 +342,7 @@ export default async function SubmissionsPage() {
             )}
           </div>
         )}
-      </section>
-    </div>
+      </TnoPlate>
+    </TnoWindow>
   );
 }

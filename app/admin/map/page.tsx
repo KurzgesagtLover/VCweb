@@ -5,6 +5,7 @@ import { db } from "@/src/db";
 import { countries, mapRasterBorderLayers, mapRasters } from "@/src/db/schema";
 import { getCampaignMaps } from "@/src/db/queries/maps";
 import { getViewerContext } from "@/src/db/queries/viewer";
+import { parseMapProjection } from "@/src/domain/map/projection";
 import { PageHead } from "@/src/ui/page-head";
 import { PixelMapEditor } from "@/src/ui/pixel-map-editor";
 
@@ -27,7 +28,7 @@ export default async function AdminMapPage({
     db.query.countries.findMany({ where: eq(countries.campaignId, context.campaign.id) }),
     db.query.mapRasters.findFirst({
       where: eq(mapRasters.mapId, selectedMap.id),
-      columns: { revision: true },
+      columns: { revision: true, projection: true },
     }),
     db.query.mapRasterBorderLayers.findFirst({
       where: eq(mapRasterBorderLayers.mapId, selectedMap.id),
@@ -62,6 +63,7 @@ export default async function AdminMapPage({
         mapRevision={selectedMap.revision}
         rasterRevision={raster?.revision ?? 0}
         hasRaster={Boolean(raster)}
+        rasterProjection={parseMapProjection(raster?.projection)}
         borderRevision={borderLayer?.revision ?? 0}
         initialBorderClassifications={borderLayer?.classifications ?? []}
         countries={countryRows.map(({ id, name, code, color, isAi }) => ({

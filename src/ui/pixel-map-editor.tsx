@@ -1,13 +1,31 @@
 "use client";
 
 import NextImage from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
+import {
+  BORDER_LAYER_LABELS,
   BORDER_KIND_LABELS,
+  borderLayerKind,
   DEFAULT_BORDER_DISPLAY_COLORS,
+  DEFAULT_BORDER_LAYER_COLORS,
   type BorderClassification,
   type BorderKind,
+  type BorderLayerKind,
 } from "@/src/domain/map/border-palette";
+import {
+  MAP_PROJECTIONS,
+  MAP_PROJECTION_ASPECT,
+  MAP_PROJECTION_LABELS,
+  type MapProjection,
+} from "@/src/domain/map/projection";
 import { interpolateRasterPoints } from "@/src/domain/map/raster-territory";
 
 type Country = { id: string; name: string; code: string; color: string };
@@ -15,10 +33,12 @@ type Tool = "assign" | "island" | "border" | "pencil" | "fill" | "erase";
 type AssignmentMode = "COLOR" | "REGION";
 type MapPoint = { x: number; y: number };
 type MenuState = { colorHex: string; x: number; y: number; left: number; top: number } | null;
+type ZoomAnchor = { clientX: number; clientY: number; mapX: number; mapY: number };
 
 const MIN_ZOOM = 25;
 const MAX_ZOOM = 800;
 const ZOOM_STEP = 25;
+const BORDER_LAYER_ORDER: BorderLayerKind[] = ["COAST", "LEGAL", "ACTIVE", "INACTIVE"];
 
 const TOOL_LABELS: Record<Tool, string> = {
   assign: "영토 할당",
@@ -28,6 +48,18 @@ const TOOL_LABELS: Record<Tool, string> = {
   fill: "채우기",
   erase: "지우개",
 };
+
+function initialBorderLayerColors(rows: BorderClassification[]) {
+  const colors = { ...DEFAULT_BORDER_LAYER_COLORS };
+  const assigned = new Set<BorderLayerKind>();
+  for (const row of rows) {
+    const layer = borderLayerKind(row.kind);
+    if (!layer || assigned.has(layer)) continue;
+    colors[layer] = row.displayColor.toUpperCase();
+    assigned.add(layer);
+  }
+  return colors;
+}
 
 function rgba(hex: string) {
   const value = hex.replace("#", "");
@@ -145,6 +177,7 @@ export function PixelMapEditor({
   countries,
   borderRevision,
   initialBorderClassifications,
+  rasterProjection = "EQUIRECTANGULAR",
 }: {
   campaignId: string;
   mapId: string;
@@ -154,10 +187,14 @@ export function PixelMapEditor({
   countries: Country[];
   borderRevision: number;
   initialBorderClassifications: BorderClassification[];
+  rasterProjection?: MapProjection;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
   const drawingRef = useRef(false);
+  const zoomRef = useRef(100);
+  const zoomAnchorRef = useRef<ZoomAnchor | null>(null);
   const lastPaintPointRef = useRef<MapPoint | null>(null);
   const [tool, setTool] = useState<Tool>("assign");
   const [paintColor, setPaintColor] = useState("#2F8CA3");
@@ -174,50 +211,64 @@ export function PixelMapEditor({
   const [oceanColor, setOceanColor] = useState("#2F8CA3");
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("COLOR");
   const [islandPoints, setIslandPoints] = useState<MapPoint[]>([]);
-  const [showBorders, setShowBorders] = useState(true);
+  const [visibleBorderLayers, setVisibleBorderLayers] = useState<Record<BorderLayerKind, boolean>>({
+    COAST: true,
+    LEGAL: true,
+    ACTIVE: true,
+    INACTIVE: true,
+  });
+  const [borderLayerColors, setBorderLayerColors] = useState(() =>
+    initialBorderLayerColors(initialBorderClassifications),
+  );
   const [borderSourceColor, setBorderSourceColor] = useState("#000000");
   const [borderKind, setBorderKind] = useState<BorderKind>("LEGAL");
   const [borderDisplayColor, setBorderDisplayColor] = useState(DEFAULT_BORDER_DISPLAY_COLORS.LEGAL);
   const [borderClassifications, setBorderClassifications] = useState(initialBorderClassifications);
+  const [projection, setProjection] = useState<MapProjection>(rasterProjection);
 
   const selectedCountry = countries.find((country) => country.id === countryId);
-  const borderOverlayUrl = useMemo(
-    () =>
-      borderRevision
-        ? `/api/map/borders?mapId=${encodeURIComponent(mapId)}&v=${borderRevision}`
-        : null,
-    [borderRevision, mapId],
+  const cleanMapUrl = useMemo(
+    () => `/api/map/image?mapId=${encodeURIComponent(mapId)}&v=${rasterRevision}&borders=0`,
+    [mapId, rasterRevision],
   );
+  const borderOverlayUrl = useMemo(() => {
+    const layers = BORDER_LAYER_ORDER.filter((kind) => visibleBorderLayers[kind]);
+    if (!borderRevision || !layers.length) return null;
+    const params = new URLSearchParams({
+      mapId,
+      v: String(borderRevision),
+      layers: layers.join(","),
+    });
+    for (const kind of BORDER_LAYER_ORDER) {
+      params.set(`color-${kind.toLowerCase()}`, borderLayerColors[kind].slice(1));
+    }
+    return `/api/map/borders?${params.toString()}`;
+  }, [borderLayerColors, borderRevision, mapId, visibleBorderLayers]);
 
-  const loadCanvas = useCallback(
-    (borders: boolean) => {
-      if (!hasRaster || !canvasRef.current) return;
-      setReady(false);
-      const image = new Image();
-      image.onload = () => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.width = image.naturalWidth;
-        canvas.height = image.naturalHeight;
-        setCanvasSize({ width: image.naturalWidth, height: image.naturalHeight });
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        if (!context) return;
-        context.imageSmoothingEnabled = false;
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(image, 0, 0);
-        setReady(true);
-        setDirty(false);
-      };
-      image.src = `/api/map/image?mapId=${encodeURIComponent(mapId)}&v=${rasterRevision}&borders=${
-        borders ? "1" : "0"
-      }`;
-    },
-    [hasRaster, mapId, rasterRevision],
-  );
+  const loadCanvas = useCallback(() => {
+    if (!hasRaster || !canvasRef.current) return;
+    setReady(false);
+    const image = new Image();
+    image.onload = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      setCanvasSize({ width: image.naturalWidth, height: image.naturalHeight });
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return;
+      context.imageSmoothingEnabled = false;
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0);
+      setReady(true);
+      setDirty(false);
+    };
+    image.src = `/api/map/image?mapId=${encodeURIComponent(mapId)}&v=${rasterRevision}&borders=1`;
+  }, [hasRaster, mapId, rasterRevision]);
 
   useEffect(() => {
-    loadCanvas(showBorders);
-  }, [loadCanvas, showBorders]);
+    loadCanvas();
+  }, [loadCanvas]);
 
   const saveCanvas = useCallback(async () => {
     const canvas = canvasRef.current;
@@ -243,24 +294,53 @@ export function PixelMapEditor({
     return quantizedHex(pixel[0], pixel[1], pixel[2]);
   }
 
-  function changeZoom(nextZoom: number, anchorX?: number, anchorY?: number) {
+  function changeZoom(nextZoom: number, clientX?: number, clientY?: number) {
     const viewport = viewportRef.current;
+    const canvasWrap = canvasWrapRef.current;
     const normalized = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom));
-    if (normalized === zoom) return;
-    if (!viewport) {
+    if (normalized === zoomRef.current) return;
+    zoomRef.current = normalized;
+    if (!viewport || !canvasWrap) {
       setZoom(normalized);
       return;
     }
-    const x = anchorX ?? viewport.clientWidth / 2;
-    const y = anchorY ?? viewport.clientHeight / 2;
-    const horizontalRatio = (viewport.scrollLeft + x) / Math.max(1, viewport.scrollWidth);
-    const verticalRatio = (viewport.scrollTop + y) / Math.max(1, viewport.scrollHeight);
+    const viewportBounds = viewport.getBoundingClientRect();
+    const mapBounds = canvasWrap.getBoundingClientRect();
+    const anchorClientX = clientX ?? viewportBounds.left + viewport.clientWidth / 2;
+    const anchorClientY = clientY ?? viewportBounds.top + viewport.clientHeight / 2;
+    zoomAnchorRef.current = {
+      clientX: anchorClientX,
+      clientY: anchorClientY,
+      mapX: Math.max(0, Math.min(1, (anchorClientX - mapBounds.left) / mapBounds.width)),
+      mapY: Math.max(0, Math.min(1, (anchorClientY - mapBounds.top) / mapBounds.height)),
+    };
     setZoom(normalized);
-    requestAnimationFrame(() => {
-      viewport.scrollLeft = horizontalRatio * viewport.scrollWidth - x;
-      viewport.scrollTop = verticalRatio * viewport.scrollHeight - y;
-    });
   }
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const canvasWrap = canvasWrapRef.current;
+    const anchor = zoomAnchorRef.current;
+    if (!viewport || !canvasWrap || !anchor) return;
+    const mapBounds = canvasWrap.getBoundingClientRect();
+    viewport.scrollLeft += mapBounds.left + anchor.mapX * mapBounds.width - anchor.clientX;
+    viewport.scrollTop += mapBounds.top + anchor.mapY * mapBounds.height - anchor.clientY;
+    zoomAnchorRef.current = null;
+  }, [zoom]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const handleWheel = (event: WheelEvent) => {
+      const nextZoom = zoomRef.current + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
+      const normalized = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom));
+      if (normalized === zoomRef.current) return;
+      event.preventDefault();
+      changeZoom(normalized, event.clientX, event.clientY);
+    };
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
+  });
 
   function pushIslandPoint(point: MapPoint) {
     const previous = lastPaintPointRef.current;
@@ -303,7 +383,6 @@ export function PixelMapEditor({
       pushIslandPoint(point);
       return;
     }
-    if (!showBorders) return;
     if (tool === "fill") {
       if (floodFill(context, point.x, point.y, rgba(paintColor))) setDirty(true);
       return;
@@ -336,6 +415,25 @@ export function PixelMapEditor({
       window.location.reload();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "업로드하지 못했습니다.");
+      setBusy(false);
+    }
+  }
+
+  async function saveProjection() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/admin/map/projection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId, mapId, projection }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "투영을 적용하지 못했습니다.");
+      setMessage(`평면 투영을 ${MAP_PROJECTION_LABELS[projection]}으로 적용했습니다.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "투영을 적용하지 못했습니다.");
+    } finally {
       setBusy(false);
     }
   }
@@ -396,8 +494,22 @@ export function PixelMapEditor({
     }
   }
 
+  function updateBorderLayerColor(layer: BorderLayerKind, color: string) {
+    const displayColor = color.toUpperCase();
+    setBorderLayerColors((current) => ({ ...current, [layer]: displayColor }));
+    setBorderClassifications((current) =>
+      current.map((classification) =>
+        borderLayerKind(classification.kind) === layer
+          ? { ...classification, displayColor }
+          : classification,
+      ),
+    );
+  }
+
   function addBorderClassification() {
     const displayColor = borderKind === "NONE" ? "#000000" : borderDisplayColor.toUpperCase();
+    const layer = borderLayerKind(borderKind);
+    if (layer) updateBorderLayerColor(layer, displayColor);
     setBorderClassifications((current) => [
       ...current.filter(
         (classification) =>
@@ -446,7 +558,6 @@ export function PixelMapEditor({
             onClick={() => {
               setTool(value);
               setMenu(null);
-              if (value === "border") setShowBorders(true);
               if (value !== "island") setIslandPoints([]);
             }}
           >
@@ -501,24 +612,46 @@ export function PixelMapEditor({
             맞춤
           </button>
         </div>
-        <label className="map-border-toggle">
-          <input
-            type="checkbox"
-            checked={showBorders}
-            onChange={(event) => {
-              if (dirty) {
-                setMessage("편집 중인 지도를 먼저 저장하세요.");
-                return;
-              }
-              setShowBorders(event.target.checked);
-            }}
-          />
-          국경선 표시
-        </label>
         <button type="button" disabled={!ready || !dirty || busy} onClick={() => void save()}>
           {busy ? "저장 중..." : "지도 저장"}
         </button>
       </div>
+
+      <section className="pixel-border-display-panel" aria-label="지도 선 표시">
+        {BORDER_LAYER_ORDER.map((layer) => (
+          <div className="pixel-border-display-control" key={layer}>
+            <label className="map-border-toggle">
+              <input
+                type="checkbox"
+                checked={visibleBorderLayers[layer]}
+                disabled={dirty}
+                onChange={(event) =>
+                  setVisibleBorderLayers((current) => ({
+                    ...current,
+                    [layer]: event.target.checked,
+                  }))
+                }
+              />
+              {BORDER_LAYER_LABELS[layer]}
+            </label>
+            <input
+              type="color"
+              value={borderLayerColors[layer]}
+              disabled={dirty}
+              aria-label={`${BORDER_LAYER_LABELS[layer]} 색상`}
+              onChange={(event) => updateBorderLayerColor(layer, event.target.value)}
+            />
+          </div>
+        ))}
+        <button
+          type="button"
+          className="secondary"
+          disabled={!borderClassifications.length || busy || dirty}
+          onClick={() => void saveBorderClassifications()}
+        >
+          국경색 저장
+        </button>
+      </section>
 
       {tool === "island" && (
         <section className="pixel-tool-panel">
@@ -586,7 +719,8 @@ export function PixelMapEditor({
                 onChange={(event) => {
                   const next = event.target.value as BorderKind;
                   setBorderKind(next);
-                  if (next !== "NONE") setBorderDisplayColor(DEFAULT_BORDER_DISPLAY_COLORS[next]);
+                  const layer = borderLayerKind(next);
+                  if (layer) setBorderDisplayColor(borderLayerColors[layer]);
                 }}
               >
                 {Object.entries(BORDER_KIND_LABELS).map(([value, label]) => (
@@ -643,20 +777,9 @@ export function PixelMapEditor({
       )}
 
       {hasRaster ? (
-        <div
-          ref={viewportRef}
-          className="pixel-map-viewport"
-          onWheel={(event) => {
-            event.preventDefault();
-            const bounds = event.currentTarget.getBoundingClientRect();
-            changeZoom(
-              zoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP),
-              event.clientX - bounds.left,
-              event.clientY - bounds.top,
-            );
-          }}
-        >
+        <div ref={viewportRef} className="pixel-map-viewport">
           <div
+            ref={canvasWrapRef}
             className="pixel-map-canvas-wrap"
             style={{
               width: `${zoom}%`,
@@ -690,7 +813,18 @@ export function PixelMapEditor({
                 lastPaintPointRef.current = null;
               }}
             />
-            {showBorders && borderOverlayUrl && (
+            {!dirty && canvasSize.width > 0 && (
+              <NextImage
+                className="pixel-map-clean-overlay"
+                src={cleanMapUrl}
+                alt=""
+                width={canvasSize.width}
+                height={canvasSize.height}
+                unoptimized
+                draggable={false}
+              />
+            )}
+            {!dirty && borderOverlayUrl && (
               <NextImage
                 className="pixel-border-overlay"
                 src={borderOverlayUrl}
@@ -787,9 +921,32 @@ export function PixelMapEditor({
 
       <form action={upload} className="pixel-map-upload">
         <input type="file" name="file" accept="image/png,image/jpeg,image/webp" required />
+        <label>
+          평면 투영
+          <select
+            name="projection"
+            value={projection}
+            onChange={(event) => setProjection(event.target.value as MapProjection)}
+          >
+            {MAP_PROJECTIONS.map((option) => (
+              <option key={option} value={option}>
+                {MAP_PROJECTION_LABELS[option]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <small>
+          구체 지구에서 이 투영으로 역산합니다. 권장 가로세로비{" "}
+          {MAP_PROJECTION_ASPECT[projection].toFixed(2)} : 1
+        </small>
         <button type="submit" disabled={busy}>
           {hasRaster ? "이미지 교체·2×2 확대" : "평면 지도 업로드·2×2 확대"}
         </button>
+        {hasRaster && (
+          <button type="button" className="secondary" disabled={busy} onClick={saveProjection}>
+            투영만 적용
+          </button>
+        )}
       </form>
       {message && <p className="form-message">{message}</p>}
     </div>

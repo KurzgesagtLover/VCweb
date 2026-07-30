@@ -7,4 +7,5 @@ export * from "./gameplay";
 export * from "./operations";
 export * from "./research";
 export * from "./simulation";
+export * from "./superevents";
 export * from "./world";

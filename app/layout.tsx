@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import { BackgroundOst } from "@/src/ui/background-ost";
 import "./globals.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <a className="skip-link" href="#main-content">
           본문으로 건너뛰기
         </a>
+        <BackgroundOst />
         {children}
       </body>
     </html>

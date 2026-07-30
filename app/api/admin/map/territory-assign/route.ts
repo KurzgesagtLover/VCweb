@@ -15,10 +15,7 @@ import {
   mapRasterColorAssignments,
   mapRasters,
 } from "@/src/db/schema";
-import {
-  applyBorderClassifications,
-  borderSourceRgbs,
-} from "@/src/domain/map/border-palette";
+import { applyBorderClassifications, borderSourceRgbs } from "@/src/domain/map/border-palette";
 import { GLOBAL_MAP_H3_RESOLUTION } from "@/src/domain/map/grid";
 import { parseHexColor, rgbToHex } from "@/src/domain/map/image-colors";
 import {
@@ -28,6 +25,7 @@ import {
   removeRasterBorders,
 } from "@/src/domain/map/raster-territory";
 import { assertMapRevision } from "@/src/domain/map/revision";
+import { createRasterPreviewFromRaw } from "@/src/domain/map/raster-preview";
 import { actionRateLimiter } from "@/src/services/rate-limit";
 
 export const runtime = "nodejs";
@@ -41,7 +39,10 @@ const requestSchema = z.object({
   x: z.number().int().nonnegative(),
   y: z.number().int().nonnegative(),
   territoryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
-  oceanColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default("#2F8CA3"),
+  oceanColor: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/)
+    .default("#2F8CA3"),
   brushRadius: z.number().int().min(1).max(256).default(8),
   points: z
     .array(z.object({ x: z.number().int().nonnegative(), y: z.number().int().nonnegative() }))
@@ -63,7 +64,11 @@ export async function POST(request: Request) {
   if (!session || session.user.role !== "ADMIN") {
     return Response.json({ error: "FORBIDDEN" }, { status: 403 });
   }
-  const rateLimit = actionRateLimiter.consume(`map-territory-assign:${session.user.id}`, 20, 60_000);
+  const rateLimit = actionRateLimiter.consume(
+    `map-territory-assign:${session.user.id}`,
+    20,
+    60_000,
+  );
   if (!rateLimit.allowed) {
     return Response.json({ error: "요청이 너무 빠릅니다." }, { status: 429 });
   }
@@ -106,10 +111,7 @@ export async function POST(request: Request) {
     );
   }
   if (colorConflict && colorConflict.countryId !== input.countryId) {
-    return Response.json(
-      { error: "선택한 영토색은 다른 국가가 사용 중입니다." },
-      { status: 409 },
-    );
+    return Response.json({ error: "선택한 영토색은 다른 국가가 사용 중입니다." }, { status: 409 });
   }
 
   const territoryRgb = parseHexColor(input.territoryColor)!;
@@ -129,11 +131,7 @@ export async function POST(request: Request) {
     decoded.data[startOffset + 1],
     decoded.data[startOffset + 2],
   ] as const;
-  const sourceHex = rgbToHex([
-    sourceRgb[0] & 0xf8,
-    sourceRgb[1] & 0xf8,
-    sourceRgb[2] & 0xf8,
-  ]);
+  const sourceHex = rgbToHex([sourceRgb[0] & 0xf8, sourceRgb[1] & 0xf8, sourceRgb[2] & 0xf8]);
   if (
     borderLayer?.classifications.some(
       (classification) => classification.sourceColor.toUpperCase() === sourceHex,
@@ -161,9 +159,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "변경할 영토 픽셀이 없습니다." }, { status: 400 });
   }
 
-  const png = await sharp(decoded.data, { raw: { width, height, channels: 4 } })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
+  const [png, preview] = await Promise.all([
+    sharp(decoded.data, { raw: { width, height, channels: 4 } })
+      .png({ compressionLevel: 9 })
+      .toBuffer(),
+    createRasterPreviewFromRaw(decoded.data, width, height),
+  ]);
   const borderlessRaw = removeRasterBorders(decoded.data, width, height, borderColors);
   const borderlessPng = await sharp(borderlessRaw, { raw: { width, height, channels: 4 } })
     .png({ compressionLevel: 9 })
@@ -237,6 +238,9 @@ export async function POST(request: Request) {
       .set({
         imageData: png,
         borderlessImageData: borderlessPng,
+        previewImageData: preview.data,
+        previewWidth: preview.width,
+        previewHeight: preview.height,
         revision: newRasterRevision,
         updatedBy: session.user.id,
         updatedAt: new Date(),

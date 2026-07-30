@@ -293,5 +293,5 @@ export async function acknowledgeCampaignLoreAction() {
       target: [campaignLoreViews.campaignId, campaignLoreViews.userId],
       set: { version: context.campaign.loreVersion, viewedAt: new Date() },
     });
-  redirect(context.assignment ? "/dashboard" : "/apply");
+  redirect(context.assignment ? "/diplomacy" : "/apply");
 }

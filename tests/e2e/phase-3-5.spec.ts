@@ -6,13 +6,13 @@ async function login(page: Page, email: string) {
   await page.goto("/login");
   await page.getByLabel("이메일").fill(email);
   await page.getByLabel("비밀번호").fill(password);
-  await page.getByRole("button", { name: "로그인" }).click();
+  await page.getByRole("button", { name: "접속" }).click();
   await expect(page).toHaveURL(
-    email === "admin@virtual.local" ? /\/admin/ : /\/(dashboard|apply|world-intro)/,
+    email === "admin@virtual.local" ? /\/admin/ : /\/(diplomacy|dashboard|apply|world-intro)/,
   );
   if (page.url().endsWith("/world-intro")) {
     await page.getByRole("button", { name: "입장" }).click();
-    await expect(page).toHaveURL(/\/(dashboard|apply)/);
+    await expect(page).toHaveURL(/\/(diplomacy|dashboard|apply)/);
   }
 }
 
@@ -103,8 +103,8 @@ test.describe.serial("Phase 3~5 핵심 흐름", () => {
   test("관리자가 턴을 공개하면 새 사건과 반영 지표가 표시된다", async ({ page }) => {
     await login(page, "player1@virtual.local");
     await page.goto("/dashboard");
-    const approvalCard = page.locator("article.metric-card").filter({ hasText: "정부 지지도" });
-    const approvalBefore = await approvalCard.locator("strong").innerText();
+    const approvalGauge = page.locator(".tno-gauge").filter({ hasText: "정권 지지" });
+    const approvalBefore = await approvalGauge.locator("b").innerText();
     await logout(page);
 
     await chooseOpenEvents(page, "player1@virtual.local");
@@ -144,9 +144,9 @@ test.describe.serial("Phase 3~5 핵심 흐름", () => {
     await expect(page.getByRole("heading", { name: "항만 물류망의 병목 신호" })).toBeVisible();
     await page.goto("/dashboard");
     const approvalAfter = await page
-      .locator("article.metric-card")
-      .filter({ hasText: "정부 지지도" })
-      .locator("strong")
+      .locator(".tno-gauge")
+      .filter({ hasText: "정권 지지" })
+      .locator("b")
       .innerText();
     expect(approvalAfter).not.toBe(approvalBefore);
   });
