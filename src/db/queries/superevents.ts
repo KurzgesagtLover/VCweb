@@ -53,6 +53,8 @@ export async function getPendingSuperEvents({
     stampText: event.stampText,
     imageUrl: event.imageUrl,
     imageAlt: event.imageAlt,
+    videoUrl: event.videoUrl,
+    videoSound: event.videoSound,
     audioUrl: event.audioUrl,
     audioVolume: event.audioVolume,
     audioStartSeconds: event.audioStartSeconds,
@@ -60,6 +62,19 @@ export async function getPendingSuperEvents({
     dismissLabel: event.dismissLabel,
     holdSeconds: event.holdSeconds,
     broadcastAt: event.broadcastAt?.toISOString() ?? null,
+    superEnabled: event.superEnabled,
+    bulletin: event.bulletinEnabled
+      ? {
+          outlet: event.bulletinOutlet,
+          section: event.bulletinSection,
+          headline: event.bulletinHeadline,
+          byline: event.bulletinByline,
+          body: event.bulletinBody,
+          imageUrl: event.bulletinImageUrl,
+          imageCaption: event.bulletinImageCaption,
+          kicker: event.bulletinKicker,
+        }
+      : null,
   }));
 }
 

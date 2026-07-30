@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { acknowledgeSuperEventAction } from "@/src/actions/superevents";
 import type { SuperEventView } from "@/src/domain/superevents/template";
+import { SuperEventBulletin } from "./superevent-bulletin";
 import { SuperEventStage } from "./superevent-stage";
 
 /**
@@ -34,13 +35,40 @@ export function SuperEventBroadcast({ initialItems }: { initialItems: SuperEvent
   if (!current) return null;
 
   return (
-    <SuperEventStage
+    <SuperEventPlayback
       key={current.id}
-      view={current}
-      onDismiss={async () => {
+      item={current}
+      onFinish={async () => {
         setAcknowledged((ids) => [...ids, current.id]);
         await acknowledgeSuperEventAction(current.id);
       }}
     />
   );
+}
+
+/** 호외가 붙은 송출은 지면 → 전대역 순서로 두 겹을 차례로 넘긴다. */
+function SuperEventPlayback({
+  item,
+  onFinish,
+}: {
+  item: SuperEventView;
+  onFinish: () => void | Promise<void>;
+}) {
+  const [phase, setPhase] = useState<"bulletin" | "super">(item.bulletin ? "bulletin" : "super");
+
+  if (phase === "bulletin" && item.bulletin) {
+    return (
+      <SuperEventBulletin
+        bulletin={item.bulletin}
+        broadcastAt={item.broadcastAt}
+        codeName={item.codeName}
+        onContinue={() => {
+          if (item.superEnabled) setPhase("super");
+          else void onFinish();
+        }}
+      />
+    );
+  }
+
+  return <SuperEventStage view={item} onDismiss={() => void onFinish()} />;
 }

@@ -19,7 +19,7 @@ const LIVE_LABEL: Record<SuperEventStageMode, string> = {
 
 /**
  * 슈퍼이벤트 단일 템플릿. 화면 전체를 덮는 전대역 송출 창으로,
- * 사진·오디오·문구만 갈아 끼워 어떤 사건에도 쓴다.
+ * 사진·영상·오디오·문구만 갈아 끼워 어떤 사건에도 쓴다.
  *
  * live는 플레이어에게 실제로 송출할 때, preview는 관리자가 전체 화면으로 확인할 때,
  * embed는 편성 화면 안에 축소해 붙일 때 쓴다.
@@ -39,6 +39,11 @@ export function SuperEventStage({
   const dismissRef = useRef<HTMLButtonElement>(null);
   const paragraphs = splitSuperEventBody(view.body);
   const locked = remaining > 0;
+  // 송출 전 초안은 기준 시각이 없어 서버와 클라이언트의 "지금"이 어긋난다. 붙은 뒤에 찍는다.
+  const stamp =
+    view.broadcastAt || phase === "live" ? formatSuperEventStamp(view.broadcastAt) : "";
+  // 영상이 사진 자리를 대신한다. 소리는 영상과 음원 가운데 하나만 쓴다.
+  const videoMuted = mode === "embed" || !view.videoSound;
 
   // 잠깐 암전을 둔 뒤 브라운관을 켜듯 창을 점화한다.
   useEffect(() => {
@@ -89,11 +94,6 @@ export function SuperEventStage({
       aria-modal={overlay ? true : undefined}
       aria-labelledby={overlay ? `se-title-${view.id}` : undefined}
     >
-      {view.imageUrl && (
-        <div className="se-bleed" aria-hidden="true">
-          <Image src={view.imageUrl} alt="" fill sizes="100vw" unoptimized />
-        </div>
-      )}
       <div className="se-noise" aria-hidden="true" />
       <div className="se-flash" aria-hidden="true" />
 
@@ -105,13 +105,28 @@ export function SuperEventStage({
           </span>
           <span className="se-code">{view.codeName || "SE-000"}</span>
           <span className="se-source">{view.sourceLabel}</span>
-          <span className="se-clock">{formatSuperEventStamp(view.broadcastAt)}</span>
+          <span className="se-clock">{stamp}</span>
         </header>
 
-        {view.imageUrl ? (
+        {view.videoUrl || view.imageUrl ? (
           <figure className="se-plate">
-            <Image src={view.imageUrl} alt={view.imageAlt} fill sizes="100vw" unoptimized />
+            {view.videoUrl ? (
+              <video
+                className="se-plate-video"
+                src={view.videoUrl}
+                autoPlay
+                loop
+                playsInline
+                muted={videoMuted}
+                aria-label={view.imageAlt || undefined}
+              />
+            ) : (
+              view.imageUrl && (
+                <Image src={view.imageUrl} alt={view.imageAlt} fill sizes="100vw" unoptimized />
+              )
+            )}
             <span className="se-plate-grid" aria-hidden="true" />
+            <span className="se-grain" aria-hidden="true" />
             {view.subtitle && <figcaption>{view.subtitle}</figcaption>}
           </figure>
         ) : (
@@ -150,7 +165,7 @@ export function SuperEventStage({
         </footer>
       </article>
 
-      {mode === "live" && view.audioUrl && (
+      {mode === "live" && view.audioUrl && !(view.videoUrl && view.videoSound) && (
         <SuperEventAudio
           src={view.audioUrl}
           volume={view.audioVolume}

@@ -5,10 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import { saveSuperEventAction } from "@/src/actions/superevents";
 import {
   SUPER_EVENT_AUDIO_LIBRARY,
+  SUPER_EVENT_BULLETIN_DEFAULTS,
   SUPER_EVENT_LIMITS,
   SUPER_EVENT_TEMPLATE_DEFAULTS,
+  type SuperEventBulletinView,
   type SuperEventView,
 } from "@/src/domain/superevents/template";
+import { SuperEventBulletin } from "./superevent-bulletin";
 import { SuperEventStage } from "./superevent-stage";
 
 export type SuperEventDraft = {
@@ -24,13 +27,27 @@ export type SuperEventDraft = {
   stampText: string;
   imageUrl: string | null;
   imageAlt: string;
+  videoUrl: string | null;
+  videoSound: boolean;
   audioUrl: string | null;
   audioVolume: number;
   audioStartSeconds: number;
   audioIntroReduced: boolean;
   dismissLabel: string;
   holdSeconds: number;
+  bulletinEnabled: boolean;
+  superEnabled: boolean;
+  bulletinOutlet: string;
+  bulletinSection: string;
+  bulletinHeadline: string;
+  bulletinByline: string;
+  bulletinBody: string;
+  bulletinImageUrl: string | null;
+  bulletinImageCaption: string;
+  bulletinKicker: string;
 };
+
+type UploadSlot = "image" | "audio" | "video" | "bulletinImage";
 
 export function SuperEventComposer({
   countries,
@@ -58,6 +75,10 @@ export function SuperEventComposer({
   );
   const [imageUrl, setImageUrl] = useState(initial?.imageUrl ?? "");
   const [imageAlt, setImageAlt] = useState(initial?.imageAlt ?? "");
+  const [videoUrl, setVideoUrl] = useState(initial?.videoUrl ?? "");
+  const [videoSound, setVideoSound] = useState(
+    initial?.videoSound ?? SUPER_EVENT_TEMPLATE_DEFAULTS.videoSound,
+  );
   const [audioUrl, setAudioUrl] = useState(initial?.audioUrl ?? "");
   const [audioVolume, setAudioVolume] = useState(
     initial?.audioVolume ?? SUPER_EVENT_TEMPLATE_DEFAULTS.audioVolume,
@@ -75,11 +96,46 @@ export function SuperEventComposer({
   const [holdSeconds, setHoldSeconds] = useState(
     initial?.holdSeconds ?? SUPER_EVENT_TEMPLATE_DEFAULTS.holdSeconds,
   );
-  const [uploading, setUploading] = useState<"image" | "audio" | null>(null);
+  const [bulletinEnabled, setBulletinEnabled] = useState(initial?.bulletinEnabled ?? false);
+  const [superEnabled, setSuperEnabled] = useState(initial?.superEnabled ?? true);
+  const [bulletinOutlet, setBulletinOutlet] = useState(
+    initial?.bulletinOutlet || SUPER_EVENT_BULLETIN_DEFAULTS.outlet,
+  );
+  const [bulletinSection, setBulletinSection] = useState(
+    initial?.bulletinSection || SUPER_EVENT_BULLETIN_DEFAULTS.section,
+  );
+  const [bulletinHeadline, setBulletinHeadline] = useState(initial?.bulletinHeadline ?? "");
+  const [bulletinByline, setBulletinByline] = useState(
+    initial?.bulletinByline || SUPER_EVENT_BULLETIN_DEFAULTS.byline,
+  );
+  const [bulletinBody, setBulletinBody] = useState(initial?.bulletinBody ?? "");
+  const [bulletinImageUrl, setBulletinImageUrl] = useState(initial?.bulletinImageUrl ?? "");
+  const [bulletinImageCaption, setBulletinImageCaption] = useState(
+    initial?.bulletinImageCaption ?? "",
+  );
+  const [bulletinKicker, setBulletinKicker] = useState(
+    initial?.bulletinKicker || SUPER_EVENT_BULLETIN_DEFAULTS.kicker,
+  );
+  const [uploading, setUploading] = useState<UploadSlot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [previewTarget, setPreviewTarget] = useState<"bulletin" | "super">(
+    initial?.bulletinEnabled ? "bulletin" : "super",
+  );
+  const [fullscreenPhase, setFullscreenPhase] = useState<"bulletin" | "super">("bulletin");
   const audioPreviewRef = useRef<HTMLAudioElement>(null);
   const previewRampRef = useRef<number | null>(null);
+
+  const bulletinView: SuperEventBulletinView = {
+    outlet: bulletinOutlet,
+    section: bulletinSection,
+    headline: bulletinHeadline,
+    byline: bulletinByline,
+    body: bulletinBody,
+    imageUrl: bulletinImageUrl || null,
+    imageCaption: bulletinImageCaption,
+    kicker: bulletinKicker,
+  };
 
   const view: SuperEventView = {
     id: initial?.id ?? "compose",
@@ -92,6 +148,8 @@ export function SuperEventComposer({
     stampText,
     imageUrl: imageUrl || null,
     imageAlt,
+    videoUrl: videoUrl || null,
+    videoSound,
     audioUrl: audioUrl || null,
     audioVolume,
     audioStartSeconds,
@@ -99,7 +157,19 @@ export function SuperEventComposer({
     dismissLabel,
     holdSeconds,
     broadcastAt: null,
+    bulletin: bulletinEnabled ? bulletinView : null,
+    superEnabled,
   };
+
+  // 켜 두지 않은 겹은 미리보기에서 고를 수 없다.
+  const shownPreview =
+    previewTarget === "bulletin"
+      ? bulletinEnabled
+        ? "bulletin"
+        : "super"
+      : superEnabled
+        ? "super"
+        : "bulletin";
 
   useEffect(
     () => () => {
@@ -145,8 +215,9 @@ export function SuperEventComposer({
     previewRampRef.current = requestAnimationFrame(ramp);
   }
 
-  async function upload(kind: "image" | "audio", file: File) {
-    setUploading(kind);
+  async function upload(slot: UploadSlot, file: File) {
+    const kind = slot === "bulletinImage" ? "image" : slot;
+    setUploading(slot);
     setMessage(null);
     const formData = new FormData();
     formData.set("kind", kind);
@@ -161,7 +232,9 @@ export function SuperEventComposer({
         setMessage(payload.error ?? "업로드에 실패했습니다.");
         return;
       }
-      if (kind === "image") setImageUrl(payload.url);
+      if (slot === "image") setImageUrl(payload.url);
+      else if (slot === "bulletinImage") setBulletinImageUrl(payload.url);
+      else if (slot === "video") setVideoUrl(payload.url);
       else selectAudio(payload.url);
     } catch {
       setMessage("업로드 중 연결이 끊겼습니다.");
@@ -170,10 +243,37 @@ export function SuperEventComposer({
     }
   }
 
+  function openFullscreen() {
+    setFullscreenPhase(bulletinEnabled ? "bulletin" : "super");
+    setFullscreen(true);
+  }
+
   return (
     <>
       <form className="se-compose" action={saveSuperEventAction}>
         {initial && <input type="hidden" name="id" value={initial.id} />}
+
+        <div className="se-layers">
+          <label className="se-check">
+            <input
+              type="checkbox"
+              name="bulletinEnabled"
+              checked={bulletinEnabled}
+              onChange={(event) => setBulletinEnabled(event.target.checked)}
+            />
+            <span>호외 사용</span>
+          </label>
+          <label className="se-check">
+            <input
+              type="checkbox"
+              name="superEnabled"
+              checked={superEnabled}
+              onChange={(event) => setSuperEnabled(event.target.checked)}
+            />
+            <span>슈퍼이벤트 사용</span>
+          </label>
+          <p className="se-media-note">호외를 켜면 지면을 먼저 넘긴 뒤 전대역 송출로 이어진다</p>
+        </div>
 
         <div className="se-field-row">
           <label className="se-field">
@@ -241,7 +341,7 @@ export function SuperEventComposer({
           <input
             name="title"
             value={title}
-            required
+            required={superEnabled}
             maxLength={SUPER_EVENT_LIMITS.title}
             placeholder="전 국가에 뜨는 큰 글씨"
             onChange={(event) => setTitle(event.target.value)}
@@ -309,6 +409,41 @@ export function SuperEventComposer({
               maxLength={200}
               onChange={(event) => setImageAlt(event.target.value)}
             />
+          </label>
+
+          <div className="se-media-head">
+            <span>영상</span>
+            <div className="se-desk-actions">
+              <label className="button secondary se-upload">
+                {uploading === "video" ? "올리는 중" : "영상 올리기"}
+                <input
+                  type="file"
+                  accept="video/*"
+                  hidden
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) void upload("video", file);
+                  }}
+                />
+              </label>
+              {videoUrl && (
+                <button type="button" className="button danger" onClick={() => setVideoUrl("")}>
+                  비우기
+                </button>
+              )}
+            </div>
+          </div>
+          <p className="se-media-note">{videoUrl || "영상을 올리면 사진 대신 영상이 걸린다"}</p>
+          <input type="hidden" name="videoUrl" value={videoUrl} />
+          <label className="se-check">
+            <input
+              type="checkbox"
+              name="videoSound"
+              checked={videoSound}
+              onChange={(event) => setVideoSound(event.target.checked)}
+            />
+            <span>영상 소리 사용</span>
           </label>
         </div>
 
@@ -457,6 +592,115 @@ export function SuperEventComposer({
           />
         </label>
 
+        <div className="se-media se-bulletin-block" data-off={bulletinEnabled ? undefined : "true"}>
+          <div className="se-media-head">
+            <span>호외 · 신문 지면</span>
+            <span>{bulletinEnabled ? "송출 앞에 붙는다" : "꺼짐"}</span>
+          </div>
+          <div className="se-field-row">
+            <label className="se-field">
+              <span>발행처</span>
+              <input
+                name="bulletinOutlet"
+                value={bulletinOutlet}
+                maxLength={SUPER_EVENT_LIMITS.bulletinOutlet}
+                onChange={(event) => setBulletinOutlet(event.target.value)}
+              />
+            </label>
+            <label className="se-field">
+              <span>기자명 · 서명</span>
+              <input
+                name="bulletinByline"
+                value={bulletinByline}
+                maxLength={SUPER_EVENT_LIMITS.bulletinByline}
+                onChange={(event) => setBulletinByline(event.target.value)}
+              />
+            </label>
+          </div>
+          <label className="se-field">
+            <span>섹션 바 · 세로줄로 끊는다</span>
+            <input
+              name="bulletinSection"
+              value={bulletinSection}
+              maxLength={SUPER_EVENT_LIMITS.bulletinSection}
+              onChange={(event) => setBulletinSection(event.target.value)}
+            />
+          </label>
+          <label className="se-field">
+            <span>기사 제목</span>
+            <input
+              name="bulletinHeadline"
+              value={bulletinHeadline}
+              required={bulletinEnabled}
+              maxLength={SUPER_EVENT_LIMITS.bulletinHeadline}
+              placeholder="지면 맨 위에 걸리는 큰 글씨"
+              onChange={(event) => setBulletinHeadline(event.target.value)}
+            />
+          </label>
+          <label className="se-field">
+            <span>기사 본문 · 빈 줄로 단락을 나눈다</span>
+            <textarea
+              name="bulletinBody"
+              value={bulletinBody}
+              maxLength={SUPER_EVENT_LIMITS.bulletinBody}
+              onChange={(event) => setBulletinBody(event.target.value)}
+            />
+          </label>
+          <div className="se-media-head">
+            <span>기사 사진</span>
+            <div className="se-desk-actions">
+              <label className="button secondary se-upload">
+                {uploading === "bulletinImage" ? "올리는 중" : "이미지 올리기"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) void upload("bulletinImage", file);
+                  }}
+                />
+              </label>
+              {bulletinImageUrl && (
+                <button
+                  type="button"
+                  className="button danger"
+                  onClick={() => setBulletinImageUrl("")}
+                >
+                  비우기
+                </button>
+              )}
+            </div>
+          </div>
+          {bulletinImageUrl ? (
+            <div className="se-media-thumb">
+              <Image src={bulletinImageUrl} alt="" fill sizes="24rem" unoptimized />
+            </div>
+          ) : (
+            <div className="se-media-empty">사진 없이도 지면은 나갑니다</div>
+          )}
+          <input type="hidden" name="bulletinImageUrl" value={bulletinImageUrl} />
+          <label className="se-field">
+            <span>사진 설명</span>
+            <input
+              name="bulletinImageCaption"
+              value={bulletinImageCaption}
+              maxLength={SUPER_EVENT_LIMITS.bulletinImageCaption}
+              onChange={(event) => setBulletinImageCaption(event.target.value)}
+            />
+          </label>
+          <label className="se-field">
+            <span>하단 바 문구</span>
+            <input
+              name="bulletinKicker"
+              value={bulletinKicker}
+              maxLength={SUPER_EVENT_LIMITS.bulletinKicker}
+              onChange={(event) => setBulletinKicker(event.target.value)}
+            />
+          </label>
+        </div>
+
         {message && <p className="form-message">{message}</p>}
 
         <div className="se-compose-actions">
@@ -466,7 +710,7 @@ export function SuperEventComposer({
           <button name="intent" value="BROADCAST" className="button danger">
             저장 후 즉시 송출
           </button>
-          <button type="button" className="button secondary" onClick={() => setFullscreen(true)}>
+          <button type="button" className="button secondary" onClick={openFullscreen}>
             전체 화면으로 확인
           </button>
         </div>
@@ -477,14 +721,53 @@ export function SuperEventComposer({
           <h2>송출 미리보기</h2>
           <span className="muted">플레이어 화면에 그대로 뜨는 모습입니다.</span>
         </div>
+        <div className="se-preview-switch">
+          <button
+            type="button"
+            className={shownPreview === "bulletin" ? "is-on" : undefined}
+            disabled={!bulletinEnabled}
+            onClick={() => setPreviewTarget("bulletin")}
+          >
+            호외
+          </button>
+          <button
+            type="button"
+            className={shownPreview === "super" ? "is-on" : undefined}
+            disabled={!superEnabled}
+            onClick={() => setPreviewTarget("super")}
+          >
+            슈퍼이벤트
+          </button>
+        </div>
         <div className="se-monitor">
-          <SuperEventStage view={view} mode="embed" />
+          {shownPreview === "bulletin" ? (
+            <SuperEventBulletin
+              bulletin={bulletinView}
+              broadcastAt={null}
+              codeName={codeName}
+              mode="embed"
+            />
+          ) : (
+            <SuperEventStage view={view} mode="embed" />
+          )}
         </div>
       </div>
 
-      {fullscreen && (
-        <SuperEventStage view={view} mode="preview" onDismiss={() => setFullscreen(false)} />
-      )}
+      {fullscreen &&
+        (fullscreenPhase === "bulletin" && bulletinEnabled ? (
+          <SuperEventBulletin
+            bulletin={bulletinView}
+            broadcastAt={null}
+            codeName={codeName}
+            mode="preview"
+            onContinue={() => {
+              if (superEnabled) setFullscreenPhase("super");
+              else setFullscreen(false);
+            }}
+          />
+        ) : (
+          <SuperEventStage view={view} mode="preview" onDismiss={() => setFullscreen(false)} />
+        ))}
     </>
   );
 }

@@ -25,24 +25,53 @@ const composeSchema = z.object({
   targetCountryId: z.string().uuid().nullable(),
   codeName: trimmed(SUPER_EVENT_LIMITS.codeName),
   sourceLabel: trimmed(SUPER_EVENT_LIMITS.sourceLabel),
-  title: trimmed(SUPER_EVENT_LIMITS.title).min(1, "제목을 입력해 주세요."),
+  title: trimmed(SUPER_EVENT_LIMITS.title),
   subtitle: trimmed(SUPER_EVENT_LIMITS.subtitle),
   body: trimmed(SUPER_EVENT_LIMITS.body),
   footnote: trimmed(SUPER_EVENT_LIMITS.footnote),
   stampText: trimmed(SUPER_EVENT_LIMITS.stampText),
   imageUrl: z.string().max(400).nullable(),
   imageAlt: trimmed(200),
+  videoUrl: z.string().max(400).nullable(),
+  videoSound: z.boolean(),
   audioUrl: z.string().max(400).nullable(),
   audioVolume: z.coerce.number().int().min(0).max(100),
   audioStartSeconds: z.coerce.number().int().min(0).max(SUPER_EVENT_LIMITS.audioStartSecondsMax),
   audioIntroReduced: z.boolean(),
   dismissLabel: trimmed(SUPER_EVENT_LIMITS.dismissLabel),
   holdSeconds: z.coerce.number().int().min(0).max(SUPER_EVENT_LIMITS.holdSecondsMax),
+  bulletinEnabled: z.boolean(),
+  superEnabled: z.boolean(),
+  bulletinOutlet: trimmed(SUPER_EVENT_LIMITS.bulletinOutlet),
+  bulletinSection: trimmed(SUPER_EVENT_LIMITS.bulletinSection),
+  bulletinHeadline: trimmed(SUPER_EVENT_LIMITS.bulletinHeadline),
+  bulletinByline: trimmed(SUPER_EVENT_LIMITS.bulletinByline),
+  bulletinBody: trimmed(SUPER_EVENT_LIMITS.bulletinBody),
+  bulletinImageUrl: z.string().max(400).nullable(),
+  bulletinImageCaption: trimmed(SUPER_EVENT_LIMITS.bulletinImageCaption),
+  bulletinKicker: trimmed(SUPER_EVENT_LIMITS.bulletinKicker),
 });
 
 function optionalText(value: FormDataEntryValue | null) {
   const text = typeof value === "string" ? value.trim() : "";
   return text.length ? text : null;
+}
+
+/** 호외와 전대역 송출 가운데 최소 한 겹은 내용이 있어야 한다. */
+function assertComposeShape(input: z.infer<typeof composeSchema>) {
+  if (!input.bulletinEnabled && !input.superEnabled) {
+    throw new Error("호외와 전대역 송출 가운데 최소 하나는 켜야 합니다.");
+  }
+  if (input.superEnabled && !input.title) throw new Error("전대역 송출은 제목이 필요합니다.");
+  if (input.bulletinEnabled && !input.bulletinHeadline) {
+    throw new Error("호외는 기사 제목이 필요합니다.");
+  }
+}
+
+/** 알림과 목록에 쓸 대표 문구. 호외만 내보낸 건은 기사 제목을 쓴다. */
+function headlineOf(target: { title: string; bulletinHeadline: string; superEnabled: boolean }) {
+  const primary = target.superEnabled ? target.title : target.bulletinHeadline;
+  return primary || target.title || target.bulletinHeadline;
 }
 
 /** 편성 화면의 저장 버튼. intent=BROADCAST이면 저장 직후 곧바로 송출한다. */
@@ -65,16 +94,29 @@ export async function saveSuperEventAction(formData: FormData) {
     stampText: formData.get("stampText") ?? "",
     imageUrl: optionalText(formData.get("imageUrl")),
     imageAlt: formData.get("imageAlt") ?? "",
+    videoUrl: optionalText(formData.get("videoUrl")),
+    videoSound: formData.get("videoSound") === "on",
     audioUrl: optionalText(formData.get("audioUrl")),
     audioVolume: formData.get("audioVolume") ?? 70,
     audioStartSeconds: formData.get("audioStartSeconds") ?? 0,
     audioIntroReduced: formData.get("audioIntroReduced") === "on",
     dismissLabel: formData.get("dismissLabel") ?? "확인",
     holdSeconds: formData.get("holdSeconds") ?? 4,
+    bulletinEnabled: formData.get("bulletinEnabled") === "on",
+    superEnabled: formData.get("superEnabled") === "on",
+    bulletinOutlet: formData.get("bulletinOutlet") ?? "",
+    bulletinSection: formData.get("bulletinSection") ?? "",
+    bulletinHeadline: formData.get("bulletinHeadline") ?? "",
+    bulletinByline: formData.get("bulletinByline") ?? "",
+    bulletinBody: formData.get("bulletinBody") ?? "",
+    bulletinImageUrl: optionalText(formData.get("bulletinImageUrl")),
+    bulletinImageCaption: formData.get("bulletinImageCaption") ?? "",
+    bulletinKicker: formData.get("bulletinKicker") ?? "",
   });
   if (input.audience === "COUNTRY" && !input.targetCountryId) {
     throw new Error("국가 지정 송출은 대상 국가를 골라야 합니다.");
   }
+  assertComposeShape(input);
 
   const values = {
     campaignId: context.campaign.id,
@@ -90,12 +132,24 @@ export async function saveSuperEventAction(formData: FormData) {
     stampText: input.stampText,
     imageUrl: input.imageUrl,
     imageAlt: input.imageAlt,
+    videoUrl: input.videoUrl,
+    videoSound: input.videoSound,
     audioUrl: input.audioUrl,
     audioVolume: input.audioVolume,
     audioStartSeconds: input.audioStartSeconds,
     audioIntroReduced: input.audioIntroReduced,
     dismissLabel: input.dismissLabel || "확인",
     holdSeconds: input.holdSeconds,
+    bulletinEnabled: input.bulletinEnabled,
+    superEnabled: input.superEnabled,
+    bulletinOutlet: input.bulletinOutlet,
+    bulletinSection: input.bulletinSection,
+    bulletinHeadline: input.bulletinHeadline,
+    bulletinByline: input.bulletinByline,
+    bulletinBody: input.bulletinBody,
+    bulletinImageUrl: input.bulletinImageUrl,
+    bulletinImageCaption: input.bulletinImageCaption,
+    bulletinKicker: input.bulletinKicker,
     updatedAt: new Date(),
   };
 
@@ -199,7 +253,8 @@ async function broadcast(actorId: string, superEventId: string) {
     where: eq(superEvents.id, superEventId),
   });
   if (!target) throw new Error("송출할 슈퍼이벤트를 찾을 수 없습니다.");
-  if (!target.title.trim()) throw new Error("제목이 빈 슈퍼이벤트는 송출할 수 없습니다.");
+  const headline = headlineOf(target).trim();
+  if (!headline) throw new Error("제목이 빈 송출은 내보낼 수 없습니다.");
 
   const recipients =
     target.audience === "COUNTRY" && target.targetCountryId
@@ -235,8 +290,8 @@ async function broadcast(actorId: string, superEventId: string) {
           userId: recipient.userId,
           campaignId: target.campaignId,
           type: "SUPER_EVENT",
-          title: `전대역 송출 · ${target.title}`,
-          body: target.subtitle || "긴급 송출이 전달되었습니다.",
+          title: `${target.superEnabled ? "전대역 송출" : "호외"} · ${headline}`,
+          body: target.subtitle || target.bulletinKicker || "긴급 송출이 전달되었습니다.",
           href: null,
         })),
       );

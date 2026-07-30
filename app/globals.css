@@ -6885,12 +6885,20 @@ button.active,
     inset 0 0 0 3px rgba(3, 6, 9, 0.95),
     inset 0 0 0 4px rgba(69, 99, 110, 0.4);
 }
-.se-plate img {
+.se-plate img,
+.se-plate-video {
   object-fit: cover;
   filter: grayscale(0.5) contrast(1.14) brightness(0.84);
   transform: scale(1.02);
 }
-.se-stage[data-phase="live"] .se-plate img {
+.se-plate-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.se-stage[data-phase="live"] .se-plate img,
+.se-stage[data-phase="live"] .se-plate-video {
   animation: se-drift 24s ease-out forwards;
 }
 @keyframes se-drift {
@@ -7257,6 +7265,47 @@ button.active,
   padding-top: 0.3rem;
   border-top: 1px solid #1b2429;
 }
+/* 두 겹(호외·전대역) 가운데 무엇을 내보낼지 고르는 머리 부분 */
+.se-layers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.1rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #22303a;
+  background: rgba(143, 214, 230, 0.04);
+}
+.se-layers .se-media-note {
+  flex-basis: 100%;
+}
+/* 꺼 둔 겹은 흐리게 눌러 두되 편집은 계속 되게 남긴다. */
+.se-bulletin-block[data-off="true"] {
+  opacity: 0.5;
+}
+.se-preview-switch {
+  display: flex;
+  gap: 0.35rem;
+}
+.se-preview-switch button {
+  min-height: 1.9rem;
+  padding: 0 0.8rem;
+  border: 1px solid #26333c;
+  border-radius: 0;
+  background: #0b0f12;
+  color: #7f939c;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+}
+.se-preview-switch button.is-on {
+  border-color: rgba(143, 214, 230, 0.55);
+  color: #d8eef4;
+  box-shadow: inset 0 0 0 1px rgba(143, 214, 230, 0.16);
+}
+.se-preview-switch button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .se-preview-panel {
   display: grid;
   gap: 0.6rem;
@@ -7350,5 +7399,294 @@ button.active,
   }
   .se-desk-actions {
     justify-content: flex-start;
+  }
+}
+
+/* 사진과 영상 위에 얹는 미세한 필름 알갱이. 오래된 필름을 스캔한 듯한 결을 만든다. */
+.se-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.42;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.6'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+  animation: se-grain-shift 0.55s steps(3) infinite;
+}
+@keyframes se-grain-shift {
+  0% {
+    background-position: 0 0;
+  }
+  33% {
+    background-position: -37px 21px;
+  }
+  66% {
+    background-position: 23px -31px;
+  }
+  100% {
+    background-position: -13px 13px;
+  }
+}
+/* superevent-bulletin: 전대역 송출 앞에 한 장 끼는 호외 지면 */
+.sb-stage {
+  --sb-line: #2b3941;
+  --sb-ink: #dbe7eb;
+  --sb-accent: #8fd6e6;
+  --sb-alert: #e0526f;
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: grid;
+  place-items: center;
+  padding: clamp(0.7rem, 3vh, 2rem) clamp(0.7rem, 3vw, 2rem);
+  overflow: hidden;
+  background: rgba(2, 4, 6, 0.9);
+  font-family: var(--sans);
+}
+.sb-page {
+  position: relative;
+  width: min(38rem, 96%);
+  max-height: min(88vh, 46rem);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  padding: clamp(0.6rem, 1vw, 0.9rem);
+  border: 1px solid var(--sb-line);
+  background: linear-gradient(180deg, #0c1014, #080b0e);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: scale(0.994);
+  transition:
+    opacity 0.32s ease,
+    transform 0.32s ease;
+}
+.sb-stage[data-phase="live"] .sb-page {
+  opacity: 1;
+  transform: none;
+}
+.sb-masthead {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 3px double var(--sb-line);
+}
+.sb-edition {
+  padding: 0.16rem 0.45rem;
+  background: var(--sb-alert);
+  color: #10050a;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+}
+.sb-outlet {
+  color: #f0f8fb;
+  font-family: var(--title);
+  font-size: clamp(1.05rem, 2.4vw, 1.7rem);
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-dateline {
+  display: grid;
+  justify-items: end;
+  gap: 0.1rem;
+  color: rgba(184, 209, 218, 0.55);
+  font-family: var(--mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+.sb-dateline em {
+  color: rgba(143, 214, 230, 0.7);
+  font-style: normal;
+  letter-spacing: 0.16em;
+}
+/* 지면 구성 바. 실제로는 누를 수 없는 장식이지만 신문 머리의 섹션 줄을 흉내낸다. */
+.sb-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  padding: 0.28rem 0.4rem;
+  border-top: 1px solid rgba(43, 57, 65, 0.7);
+  border-bottom: 1px solid rgba(43, 57, 65, 0.7);
+  background: rgba(143, 214, 230, 0.04);
+  color: rgba(184, 209, 218, 0.6);
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.16em;
+}
+.sb-sections span:not(:last-child)::after {
+  content: " |";
+  color: rgba(143, 214, 230, 0.35);
+}
+.sb-sheet {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  padding: 0.75rem 0.2rem 0.6rem;
+}
+.sb-headline {
+  margin: 0;
+  color: #f4fbfd;
+  font-family: var(--title);
+  font-size: clamp(1.15rem, 2.6vw, 1.85rem);
+  font-weight: 400;
+  line-height: 1.24;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+.sb-byline {
+  color: rgba(143, 214, 230, 0.6);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-align: center;
+}
+.sb-plate {
+  position: relative;
+  margin: 0.25rem 0 0;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--sb-line);
+  background: #05080b;
+}
+.sb-plate img {
+  object-fit: cover;
+  filter: grayscale(1) contrast(1.2) brightness(0.78);
+}
+/* 참조 사진처럼 굵은 주사선을 얹어 낡은 화면을 찍은 인쇄물로 보이게 한다. */
+.sb-plate::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(190, 226, 238, 0.07) 0 1px,
+      rgba(3, 7, 11, 0.32) 1px 3px
+    ),
+    linear-gradient(180deg, rgba(4, 8, 12, 0.3), transparent 30%, rgba(4, 8, 12, 0.45));
+}
+.sb-plate figcaption {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 0.7rem 0.6rem 0.35rem;
+  background: linear-gradient(180deg, rgba(3, 6, 9, 0), rgba(3, 6, 9, 0.9) 48%);
+  color: rgba(219, 231, 235, 0.78);
+  font-size: 0.64rem;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+.sb-body {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+.sb-body p {
+  color: rgba(219, 231, 235, 0.82);
+  font-size: 0.78rem;
+  line-height: 1.9;
+  text-align: justify;
+  text-justify: inter-character;
+}
+/* 첫 단락 첫 글자를 크게 떨어뜨려 인쇄 지면의 결을 준다. */
+.sb-body p:first-child::first-letter {
+  float: left;
+  margin: 0.12rem 0.3rem 0 0;
+  color: var(--sb-accent);
+  font-family: var(--title);
+  font-size: 2.1rem;
+  line-height: 0.9;
+}
+.sb-continue {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+  padding: 0.62rem 0.8rem;
+  border: 1px solid rgba(143, 214, 230, 0.4);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(18, 30, 36, 0.95), rgba(7, 12, 16, 0.95));
+  color: var(--sb-ink);
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.sb-continue:hover:not(:disabled) {
+  border-color: var(--sb-accent);
+  box-shadow: 0 0 18px rgba(0, 169, 196, 0.2);
+}
+.sb-continue:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.sb-continue-mark {
+  width: 0;
+  height: 0;
+  border-top: 0.32rem solid transparent;
+  border-bottom: 0.32rem solid transparent;
+  border-left: 0.42rem solid var(--sb-accent);
+}
+.sb-continue-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+.sb-continue em {
+  color: rgba(143, 214, 230, 0.65);
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  font-style: normal;
+  letter-spacing: 0.18em;
+}
+/* 편성 화면 안에 끼워 넣는 축소 미리보기 */
+.sb-stage[data-mode="embed"] {
+  position: relative;
+  inset: auto;
+  z-index: 0;
+  min-height: 22rem;
+  padding: 0.7rem;
+  background: #05080b;
+}
+.sb-stage[data-mode="embed"] .sb-page {
+  max-height: none;
+}
+.sb-stage[data-mode="embed"] .sb-outlet {
+  font-size: clamp(0.9rem, 1.8vw, 1.3rem);
+}
+.sb-stage[data-mode="embed"] .sb-headline {
+  font-size: clamp(1rem, 1.9vw, 1.4rem);
+}
+@media (max-width: 720px) {
+  .sb-masthead {
+    grid-template-columns: 1fr;
+    justify-items: start;
+    gap: 0.35rem;
+  }
+  .sb-outlet {
+    text-align: left;
+  }
+  .sb-dateline {
+    justify-items: start;
   }
 }

@@ -18,6 +18,13 @@ const AUDIO_EXTENSIONS = new Map([
   ["audio/webm", "webm"],
 ]);
 
+const VIDEO_EXTENSIONS = new Map([
+  ["video/mp4", "mp4"],
+  ["video/webm", "webm"],
+  ["video/ogg", "ogv"],
+  ["video/quicktime", "mov"],
+]);
+
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 export async function POST(request: Request) {
@@ -32,7 +39,7 @@ export async function POST(request: Request) {
   const formData = await request.formData();
   const kind = formData.get("kind");
   const file = formData.get("file");
-  if (kind !== "image" && kind !== "audio") {
+  if (kind !== "image" && kind !== "audio" && kind !== "video") {
     return Response.json({ error: "업로드 종류가 올바르지 않습니다." }, { status: 400 });
   }
   if (!(file instanceof File) || file.size === 0) {
@@ -63,6 +70,31 @@ export async function POST(request: Request) {
       targetId: fileName,
       afterSummary: { url, bytes: file.size },
       reason: "슈퍼이벤트 오디오 업로드",
+    });
+    return Response.json({ url });
+  }
+
+  if (kind === "video") {
+    const extension = VIDEO_EXTENSIONS.get(file.type);
+    if (!extension) {
+      return Response.json({ error: "MP4, WebM, OGV, MOV만 사용할 수 있습니다." }, { status: 400 });
+    }
+    if (file.size > 80 * 1024 * 1024) {
+      return Response.json({ error: "영상은 80MB 이하여야 합니다." }, { status: 400 });
+    }
+    const fileName = `${randomUUID()}.${extension}`;
+    await writeFile(path.join(uploadDirectory, fileName), Buffer.from(await file.arrayBuffer()), {
+      flag: "wx",
+    });
+    const url = `/uploads/superevents/${fileName}`;
+    await db.insert(auditLogs).values({
+      campaignId: context.campaign.id,
+      actorId: session.user.id,
+      action: "UPLOAD_SUPER_EVENT_VIDEO",
+      targetType: "SUPER_EVENT_MEDIA",
+      targetId: fileName,
+      afterSummary: { url, bytes: file.size },
+      reason: "슈퍼이벤트 영상 업로드",
     });
     return Response.json({ url });
   }

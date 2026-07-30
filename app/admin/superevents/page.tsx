@@ -49,12 +49,24 @@ export default async function AdminSuperEventsPage({
         stampText: editing.stampText,
         imageUrl: editing.imageUrl,
         imageAlt: editing.imageAlt,
+        videoUrl: editing.videoUrl,
+        videoSound: editing.videoSound,
         audioUrl: editing.audioUrl,
         audioVolume: editing.audioVolume,
         audioStartSeconds: editing.audioStartSeconds,
         audioIntroReduced: editing.audioIntroReduced,
         dismissLabel: editing.dismissLabel,
         holdSeconds: editing.holdSeconds,
+        bulletinEnabled: editing.bulletinEnabled,
+        superEnabled: editing.superEnabled,
+        bulletinOutlet: editing.bulletinOutlet,
+        bulletinSection: editing.bulletinSection,
+        bulletinHeadline: editing.bulletinHeadline,
+        bulletinByline: editing.bulletinByline,
+        bulletinBody: editing.bulletinBody,
+        bulletinImageUrl: editing.bulletinImageUrl,
+        bulletinImageCaption: editing.bulletinImageCaption,
+        bulletinKicker: editing.bulletinKicker,
       }
     : null;
   const live = rows.filter((row) => row.status === "BROADCAST");
@@ -89,16 +101,24 @@ export default async function AdminSuperEventsPage({
           <div className="se-desk-list">
             {rows.map((row) => (
               <article className="se-desk-row" key={row.id}>
-                {row.imageUrl ? (
+                {row.imageUrl ?? row.bulletinImageUrl ? (
                   <div className="se-desk-thumb">
-                    <Image src={row.imageUrl} alt="" fill sizes="6rem" unoptimized />
+                    <Image
+                      src={(row.imageUrl ?? row.bulletinImageUrl) as string}
+                      alt=""
+                      fill
+                      sizes="6rem"
+                      unoptimized
+                    />
                   </div>
                 ) : (
                   <div className="se-desk-thumb" />
                 )}
                 <div className="se-desk-meta">
-                  <strong>{row.title}</strong>
-                  <span>{row.subtitle || row.sourceLabel || "부제 없음"}</span>
+                  <strong>{row.title || row.bulletinHeadline || "제목 없음"}</strong>
+                  <span>
+                    {row.subtitle || row.bulletinKicker || row.sourceLabel || "부제 없음"}
+                  </span>
                   <div className="se-desk-tags">
                     <span
                       className={
@@ -117,6 +137,9 @@ export default async function AdminSuperEventsPage({
                     <span>
                       확인 {row.acknowledged}/{row.audienceSize}
                     </span>
+                    {row.bulletinEnabled && <span>호외</span>}
+                    {row.superEnabled && <span>전대역</span>}
+                    {row.videoUrl && <span>영상</span>}
                     {row.audioUrl && <span>음원</span>}
                     <span>{row.codeName || "SE-000"}</span>
                   </div>
