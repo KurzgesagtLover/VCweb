@@ -30,6 +30,7 @@ services:
     volumes:
       - .:/app
       - web_node_modules:/app/node_modules
+      - web_next:/app/.next
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,4 +55,5 @@ services:
 volumes:
   virtual_nation_pgdata:
   web_node_modules:
+  web_next:
   worker_node_modules:

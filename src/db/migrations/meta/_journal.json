@@ -169,6 +169,153 @@
       "when": 1785445791335,
       "tag": "0023_busy_dust",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785522210457,
+      "tag": "0024_deep_union_jack",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785574743533,
+      "tag": "0025_charming_paladin",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785723327529,
+      "tag": "0026_stormy_tempest",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1785948199841,
+      "tag": "0027_heavy_sally_floyd",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1785955993614,
+      "tag": "0028_closed_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1785989180767,
+      "tag": "0029_medical_nehzno",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786866514697,
+      "tag": "0030_little_marauders",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786867318171,
+      "tag": "0031_yummy_imperial_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787410150231,
+      "tag": "0032_yielding_black_crow",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1787411224470,
+      "tag": "0033_watery_nitro",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1787487824118,
+      "tag": "0034_company_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1787490543240,
+      "tag": "0035_company_class_financials",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787492731373,
+      "tag": "0036_automation_productivity_growth",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1787493597649,
+      "tag": "0037_add_general_manufacturing_sector",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787495031642,
+      "tag": "0038_split_tax_rates",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1787496484397,
+      "tag": "0039_economic_blocs",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1787744558882,
+      "tag": "0040_groovy_iron_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787842460862,
+      "tag": "0041_numerous_gamma_corps",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1787954245731,
+      "tag": "0042_city_construction_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1788030344727,
+      "tag": "0043_hierarchical-administrative-boundaries",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1788275643687,
+      "tag": "0044_remove_hex_map",
+      "breakpoints": true
     }
   ]
 }

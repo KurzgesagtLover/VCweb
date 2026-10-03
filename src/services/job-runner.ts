@@ -41,6 +41,8 @@ import {
   type EconomyInput,
   type EconomyRules,
 } from "@/src/domain/economy/calculator";
+import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
+import { calculateTaxRevenue } from "@/src/domain/economy/tax";
 import { validateEffects } from "@/src/domain/effects/registry";
 import { isPolicyMetric, metricValue } from "@/src/domain/policy/metrics";
 import {
@@ -205,6 +207,11 @@ const scheduledEconomicMetrics = new Set([
   "inflationRate",
   "unemploymentRate",
   "productivityIndex",
+  "povertyRate",
+  "agriculturalProductivityIndex",
+  "foodSelfSufficiency",
+  "industrialCapitalStockIndex",
+  "researchCapacityIndex",
   "incomeGini",
   "wealthGini",
   "debtToGdp",
@@ -248,8 +255,23 @@ function applyScheduledModifier(
     target[modifier.metric] = Math.round(clampNumber(next.toNumber()));
     return;
   }
-  if (["incomeGini", "wealthGini"].includes(modifier.metric)) {
+  if (["incomeGini", "wealthGini", "povertyRate"].includes(modifier.metric)) {
     target[modifier.metric] = Decimal.max(0, Decimal.min(1, next)).toString();
+    return;
+  }
+  if (modifier.metric === "foodSelfSufficiency") {
+    target[modifier.metric] = Decimal.max(0, Decimal.min(2, next)).toString();
+    return;
+  }
+  if (
+    [
+      "productivityIndex",
+      "agriculturalProductivityIndex",
+      "industrialCapitalStockIndex",
+      "researchCapacityIndex",
+    ].includes(modifier.metric)
+  ) {
+    target[modifier.metric] = Decimal.max("0.000001", next).toString();
     return;
   }
   if (modifier.metric === "unemploymentRate") {
@@ -292,8 +314,17 @@ async function handleCalculation(job: JobRow) {
     snapshots.economic.creditScore,
   );
   const policyRevenue = snapshots.fiscalPolicy
-    ? new Decimal(snapshots.economic.nominalGdp).mul(snapshots.fiscalPolicy.taxRate).toString()
+    ? calculateTaxRevenue(snapshots.economic.nominalGdp, {
+        incomeTaxRate: snapshots.fiscalPolicy.incomeTaxRate,
+        corporateTaxRate: snapshots.fiscalPolicy.corporateTaxRate,
+        otherTaxRate: snapshots.fiscalPolicy.otherTaxRate,
+      }).toString()
     : snapshots.economic.governmentRevenue;
+  const governmentSpendingToGdp = new Decimal(snapshots.economic.nominalGdp).isZero()
+    ? new Decimal(0)
+    : new Decimal(snapshots.economic.governmentSpending).div(snapshots.economic.nominalGdp);
+  const budgetRate = (value: number | undefined, fallback: number) =>
+    governmentSpendingToGdp.mul(new Decimal(value ?? fallback).div(100)).toString();
   const input: EconomyInput = {
     population: snapshots.demographic.population,
     fertilityRate: snapshots.demographic.fertilityRate,
@@ -324,8 +355,16 @@ async function handleCalculation(job: JobRow) {
     policyRate: snapshots.economic.policyRate,
     currentAccountToGdp: snapshots.economic.currentAccountToGdp,
     productivityIndex: snapshots.economic.productivityIndex,
+    povertyRate: snapshots.economic.povertyRate,
+    agriculturalProductivityIndex: snapshots.economic.agriculturalProductivityIndex,
+    foodSelfSufficiency: snapshots.economic.foodSelfSufficiency,
+    industrialCapitalStockIndex: snapshots.economic.industrialCapitalStockIndex,
+    researchCapacityIndex: snapshots.economic.researchCapacityIndex,
     educationIndex: overrides.get("educationIndex") ?? "0.7",
     researchInvestmentRate: overrides.get("researchInvestmentRate") ?? "0.025",
+    publicInvestmentRate: budgetRate(snapshots.fiscalPolicy?.budgetIndustry, 22),
+    educationSpendingRate: budgetRate(snapshots.fiscalPolicy?.budgetEducation, 17),
+    welfareSpendingRate: budgetRate(snapshots.fiscalPolicy?.budgetWelfare, 20),
     stateCapacity: String(snapshots.political.stateCapacity),
     structuralReform: overrides.get("structuralReform") ?? "0",
     externalShock: overrides.get("externalShock") ?? "0",
@@ -347,6 +386,7 @@ async function handleCalculation(job: JobRow) {
   const afterEconomic = {
     ...beforeEconomic,
     ...economicResult,
+    currencyCode: ECONOMY_STATISTICS_CURRENCY,
     creditRating: creditRatingFromScore(economicResult.creditScore),
     calculationState: "MACRO_SIMULATED",
   };
@@ -418,6 +458,7 @@ async function handleCalculation(job: JobRow) {
     unemploymentRate: Number(afterEconomic.unemploymentRate),
     previousUnemploymentRate: Number(snapshots.economic.unemploymentRate),
     incomeGini: Number(afterEconomic.incomeGini),
+    povertyRate: Number(afterEconomic.povertyRate),
     activePolicyImpulse,
   });
   afterPolitical.stability = politicalState.stability;
@@ -740,6 +781,7 @@ async function handleSubmissionJudgment(job: JobRow) {
       targetMetrics: submission.targetMetrics,
       expectedDurationTurns: submission.expectedDurationTurns,
       budget: submission.budget,
+      budgetUnit: "$1M",
       economicSystem: country?.economicSystem ?? "FREE_MARKET",
       currentEconomic: state.economic,
       currentPolitical: state.political,

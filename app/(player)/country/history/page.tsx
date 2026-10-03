@@ -16,6 +16,12 @@ export default async function HistoryPage() {
   const levels = [...new Set(ledger.divisions.map((division) => division.level))].sort(
     (a, b) => a - b,
   );
+  const levelCounts = new Map(
+    levels.map((level) => [
+      level,
+      ledger.divisions.filter((division) => division.level === level).length,
+    ]),
+  );
 
   return (
     <TnoWindow
@@ -67,7 +73,12 @@ export default async function HistoryPage() {
               items={[
                 { label: "행성", value: profile?.planet ?? "—" },
                 { label: "행정구역 단계", value: levels.length ? `${levels.length}단계` : "—" },
-                { label: "하위 구역", value: `${ledger.divisions.length}개` },
+                {
+                  label: "하위 구역",
+                  value: levels
+                    .map((level) => `ADM${level} ${levelCounts.get(level)}개`)
+                    .join(" · "),
+                },
                 {
                   label: "국교",
                   value: profile?.stateReligion ?? "없음",
@@ -82,16 +93,20 @@ export default async function HistoryPage() {
                 {levels.map((level) => (
                   <section key={level}>
                     <h4>{level}단계</h4>
-                    <div className="tno-tag-row">
-                      {ledger.divisions
-                        .filter((division) => division.level === level)
-                        .map((division) => (
-                          <span key={division.id}>
-                            {division.name}
-                            <em>{division.typeName}</em>
-                          </span>
-                        ))}
-                    </div>
+                    {level === 1 ? (
+                      <div className="tno-tag-row">
+                        {ledger.divisions
+                          .filter((division) => division.level === level)
+                          .map((division) => (
+                            <span key={division.id}>
+                              {division.name}
+                              <em>{division.typeName}</em>
+                            </span>
+                          ))}
+                      </div>
+                    ) : (
+                      <p>{levelCounts.get(level)?.toLocaleString("ko-KR")}개 등록</p>
+                    )}
                   </section>
                 ))}
               </div>

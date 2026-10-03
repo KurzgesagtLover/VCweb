@@ -1,10 +1,14 @@
-import { and, asc, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq, ne, or } from "drizzle-orm";
 import { db } from "@/src/db";
 import {
   countries,
   countryRelations,
+  diplomaticBlocMembers,
+  diplomaticBlocs,
   diplomaticMessages,
   diplomaticProposals,
+  economicBlocMembers,
+  economicBlocs,
 } from "@/src/db/schema";
 
 export function relationLabel(score: number) {
@@ -64,4 +68,57 @@ export async function getAiDiplomacyReview(campaignId: string) {
       ),
     )
     .orderBy(asc(diplomaticMessages.createdAt));
+}
+
+export async function getDiplomacyAdministration(campaignId: string) {
+  const [countryRows, relationRows, blocRows, memberRows, economicBlocRows, economicMemberRows] =
+    await Promise.all([
+      db.query.countries.findMany({
+        where: eq(countries.campaignId, campaignId),
+        orderBy: [asc(countries.name)],
+        columns: { id: true, name: true, code: true, color: true, entityType: true },
+      }),
+      db.query.countryRelations.findMany({
+        where: and(
+          eq(countryRelations.campaignId, campaignId),
+          ne(countryRelations.status, "NORMAL"),
+        ),
+        orderBy: [desc(countryRelations.updatedAt)],
+      }),
+      db.query.diplomaticBlocs.findMany({
+        where: and(
+          eq(diplomaticBlocs.campaignId, campaignId),
+          eq(diplomaticBlocs.status, "ACTIVE"),
+        ),
+        orderBy: [asc(diplomaticBlocs.name)],
+      }),
+      db
+        .select({ member: diplomaticBlocMembers, country: countries })
+        .from(diplomaticBlocMembers)
+        .innerJoin(countries, eq(diplomaticBlocMembers.countryId, countries.id))
+        .where(eq(countries.campaignId, campaignId))
+        .orderBy(asc(countries.name)),
+      db.query.economicBlocs.findMany({
+        where: and(eq(economicBlocs.campaignId, campaignId), eq(economicBlocs.status, "ACTIVE")),
+        orderBy: [asc(economicBlocs.name)],
+      }),
+      db
+        .select({ member: economicBlocMembers, country: countries })
+        .from(economicBlocMembers)
+        .innerJoin(countries, eq(economicBlocMembers.countryId, countries.id))
+        .where(eq(countries.campaignId, campaignId))
+        .orderBy(asc(countries.name)),
+    ]);
+  return {
+    countries: countryRows,
+    relations: relationRows,
+    blocs: blocRows.map((bloc) => ({
+      bloc,
+      members: memberRows.filter((row) => row.member.blocId === bloc.id),
+    })),
+    economicBlocs: economicBlocRows.map((bloc) => ({
+      bloc,
+      members: economicMemberRows.filter((row) => row.member.blocId === bloc.id),
+    })),
+  };
 }

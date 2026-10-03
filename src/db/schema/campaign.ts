@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -10,6 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { users } from "./auth";
 import { applicationStatus, gameTimeUnit, membershipStatus, turnStatus, userRole } from "./enums";
 
@@ -52,8 +54,6 @@ export const campaignMaps = pgTable(
       .references(() => campaigns.id, { onDelete: "restrict" }),
     position: integer("position").notNull(),
     name: text("name").notNull(),
-    hexResolution: integer("hex_resolution").notNull().default(4),
-    adaptiveResolution: boolean("adaptive_resolution").notNull().default(false),
     revision: integer("revision").notNull().default(0),
     administrativeDivisionRevision: integer("administrative_division_revision")
       .notNull()
@@ -136,6 +136,9 @@ export const countryApplications = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
     requestedCountryName: text("requested_country_name").notNull(),
+    // 지도에서 고른 국가. 반납 신청이거나 국가가 삭제된 경우 비어 있을 수 있다.
+    requestedCountryId: uuid("requested_country_id"),
+    kind: text("kind").notNull().default("ASSIGN"),
     reason: text("reason").notNull(),
     status: applicationStatus("status").notNull().default("PENDING"),
     reviewedBy: text("reviewed_by").references(() => users.id, { onDelete: "restrict" }),
@@ -147,5 +150,9 @@ export const countryApplications = pgTable(
   (table) => [
     index("country_applications_campaign_idx").on(table.campaignId),
     index("country_applications_user_idx").on(table.userId),
+    check(
+      "country_applications_kind_check",
+      sql`${table.kind} IN ('ASSIGN', 'TRANSFER', 'RELEASE')`,
+    ),
   ],
 );

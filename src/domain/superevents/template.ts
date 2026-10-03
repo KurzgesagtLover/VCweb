@@ -69,7 +69,6 @@ export const SUPER_EVENT_BULLETIN_DEFAULTS = {
 /** 편성 화면에서 곧바로 고를 수 있는 기존 OST. 별도 업로드 없이 재사용한다. */
 export const SUPER_EVENT_AUDIO_LIBRARY = [
   { url: "/ost/general-05.mp3", label: "총력 (general-05)" },
-  { url: "/ost/general-02.mp3", label: "장송 (general-02)" },
   { url: "/ost/general-06.mp3", label: "경보 (general-06)" },
   { url: "/ost/general-08.mp3", label: "정적 (general-08)" },
   { url: "/ost/general-11.mp3", label: "행진 (general-11)" },
@@ -95,9 +94,10 @@ export const SUPER_EVENT_LIMITS = {
   bulletinKicker: 60,
 } as const;
 
-/** 빈 줄로 나뉜 단락을 화면 단락으로 끊는다. */
+/** 빈 줄로 나뉜 단락을 화면 단락으로 끊는다. 폼 전송은 줄바꿈을 CRLF로 바꿔 보낸다. */
 export function splitSuperEventBody(body: string): string[] {
   return body
+    .replace(/\r\n?/g, "\n")
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.trim())
     .filter(Boolean);

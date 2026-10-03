@@ -78,6 +78,7 @@ export async function GET(request: Request) {
     LEGAL: requestedColor(url, "LEGAL"),
     ACTIVE: requestedColor(url, "ACTIVE"),
     INACTIVE: requestedColor(url, "INACTIVE"),
+    GUERRILLA: requestedColor(url, "GUERRILLA"),
   };
   const decoded = await sharp(layer.imageData)
     .ensureAlpha()

@@ -92,15 +92,9 @@ export function AdminLedger({
                         {country.name}
                       </Link>
                     </td>
+                    <td className="numeric">{formatMoney(economy?.nominalGdp)}</td>
                     <td className="numeric">
-                      {formatMoney(economy?.nominalGdp, economy?.currencyCode)}
-                    </td>
-                    <td className="numeric">
-                      {formatPerCapita(
-                        economy?.nominalGdp,
-                        demographic?.population,
-                        economy?.currencyCode,
-                      )}
+                      {formatPerCapita(economy?.nominalGdp, demographic?.population)}
                     </td>
                     <td className="numeric">{formatPercent(economy?.realGdpGrowth)}</td>
                     <td className="numeric">{formatPercent(economy?.debtToGdp)}</td>

@@ -1,9 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { quantitativeMapColors, type MapMode } from "@/src/domain/map/map-mode";
+import { celestialDirectionFromCamera, celestialPositions } from "@/src/domain/map/celestial";
+import {
+  elevationDetailWindow,
+  elevationVisibleWindow,
+  elevationWindowContains,
+  elevationWindowStride,
+} from "@/src/domain/map/elevation-detail";
 import {
   IDENTITY_FIT,
-  MAP_PROJECTION_GLSL,
   boundsFit,
   projectToUv,
   projectionFit,
@@ -11,163 +18,84 @@ import {
   type MapProjection,
   type ProjectionFit,
 } from "@/src/domain/map/projection";
+import { currentGameInstant } from "@/src/domain/turn/schedule";
+import {
+  BASE_TEXTURE_WIDTH,
+  DEFAULT_ZOOM,
+  DETAIL_TEXTURE_WIDTH,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  DEFAULT_SEA_COLOR,
+  buildCentroids,
+  createProgram,
+  detectSeaColor,
+  detectMapBounds,
+  extendMapEdges,
+  globePointToLonLat,
+  globeUniformLocations,
+  recolorMapPixels,
+  sampleCountry,
+  type Sampler,
+} from "./globe-core";
+import { createGlobeLabelLayer, type GlobeLabelLayer, type GlobeLabelSource } from "./globe-labels";
+import {
+  createSatelliteConstellationLayer,
+  type SatelliteConstellationLayer,
+} from "./globe-satellites";
+import {
+  citiesForZoom,
+  cityPopulationThreshold,
+  createGlobeCityLayer,
+  type GlobeCityLayer,
+  type GlobeCitySource,
+} from "./globe-cities";
 import { TnoDiplomacyPanel, type DiplomacyDetail } from "./tno-diplomacy-panel";
+import { ConstructionWorkspace, type ConstructionWorkspaceProps } from "./construction-workspace";
+import { playCountrySelectSound } from "./ui-click-sound";
+import {
+  createGlobeAdministrativeBoundaryLayer,
+  type AdministrativeBoundarySource,
+  type GlobeAdministrativeBoundaryLayer,
+} from "./globe-administrative-boundaries";
 
 type Country = { id: string; name: string; code: string; color: string; isAi: boolean };
 type Relation = { toCountryId: string; score: number; tags: string[] };
 type Assignment = { colorHex: string; countryId: string };
+export type MapModeDatum = {
+  countryId: string;
+  nominalGdp: string | null;
+  population: string | null;
+  diplomaticBlocColor: string | null;
+  diplomaticBlocName: string | null;
+  economicBlocColor: string | null;
+  economicBlocName: string | null;
+};
 type OwnCountry = {
   name: string;
   code: string;
   color: string;
+  entityType: string;
   flag: string;
   stability: number | null;
 };
+type GlobeGameClock = {
+  gameDateStart: string;
+  gameDateEnd: string;
+  deadlineAt: string | null;
+  intervalRealDays: number;
+};
 
-const TEXTURE_WIDTH = 4096;
-const MIN_ZOOM = 0.55;
-const MAX_ZOOM = 4.2;
-const DEFAULT_ZOOM = 0.92;
-
-const VERTEX_SHADER = `#version 300 es
-void main() {
-  float x = float((gl_VertexID << 1) & 2);
-  float y = float(gl_VertexID & 2);
-  gl_Position = vec4(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
-}`;
-
-const FRAGMENT_SHADER = `#version 300 es
-precision highp float;
-
-uniform vec2 uCenter;
-uniform float uRadius;
-uniform float uLon0;
-uniform float uLat0;
-uniform int uMode;
-uniform vec4 uFit;
-uniform float uGrid;
-uniform sampler2D uMap;
-
-out vec4 outColor;
-
-${MAP_PROJECTION_GLSL}
-
-float hash(vec2 cell) {
-  return fract(sin(dot(cell, vec2(41.7913, 78.233))) * 43758.5453);
-}
-
-vec3 starField(vec2 point) {
-  vec3 accumulated = vec3(0.0);
-  for (int layer = 0; layer < 3; layer += 1) {
-    float cellSize = 38.0 + float(layer) * 27.0;
-    vec2 scaled = point / cellSize;
-    vec2 cell = floor(scaled);
-    vec2 local = fract(scaled);
-    float seed = hash(cell + float(layer) * 19.7);
-    if (seed < 0.80) continue;
-    vec2 position = vec2(hash(cell + 3.7), hash(cell + 9.13));
-    float radius = (0.9 + 1.6 * fract(seed * 17.3)) / cellSize;
-    float brightness = smoothstep(radius, 0.0, length(local - position));
-    vec3 tint = mix(vec3(0.66, 0.74, 0.9), vec3(0.9, 0.86, 0.78), fract(seed * 7.1));
-    accumulated += tint * brightness * (0.55 + 0.75 * fract(seed * 3.3));
-  }
-  return accumulated;
-}
-
-void main() {
-  vec2 offset = gl_FragCoord.xy - uCenter;
-  float x = offset.x / uRadius;
-  float y = offset.y / uRadius;
-  float rho = length(vec2(x, y));
-
-  if (rho > 1.0) {
-    float halo = exp(-(rho - 1.0) * 13.0);
-    vec3 space = vec3(0.008, 0.014, 0.022);
-    vec3 atmosphere = vec3(0.14, 0.5, 0.68) * halo * 0.36;
-    outColor = vec4(space + atmosphere + starField(gl_FragCoord.xy) * (1.0 - halo), 1.0);
-    return;
-  }
-
-  float c = asin(clamp(rho, 0.0, 1.0));
-  float sinC = sin(c);
-  float cosC = cos(c);
-  float lat = uLat0;
-  float lon = uLon0;
-  if (rho > 1e-6) {
-    lat = asin(clamp(cosC * sin(uLat0) + (y * sinC * cos(uLat0)) / rho, -1.0, 1.0));
-    lon = uLon0 + atan(x * sinC, rho * cosC * cos(uLat0) - y * sinC * sin(uLat0));
-  }
-  lon = mod(lon + PI, 2.0 * PI) - PI;
-
-  vec2 uv = projectToUv(uMode, lon, lat, uFit);
-  vec3 surface = texture(uMap, uv).rgb;
-
-  vec3 normal = vec3(x, y, sqrt(max(0.0, 1.0 - rho * rho)));
-  vec3 lightDirection = normalize(vec3(-0.35, 0.42, 0.84));
-  float diffuse = max(dot(normal, lightDirection), 0.0);
-  float shade = mix(1.0, 0.62 + 0.52 * diffuse, 0.62);
-  float limb = smoothstep(1.0, 0.86, rho);
-  vec3 color = surface * shade * mix(0.72, 1.0, limb);
-
-  if (uGrid > 0.5) {
-    float latDeg = lat * 180.0 / PI;
-    float lonDeg = lon * 180.0 / PI;
-    float latLine = 1.0 - smoothstep(0.0, 0.55, abs(fract(latDeg / 15.0 + 0.5) - 0.5) * 15.0);
-    float lonLine = 1.0 - smoothstep(0.0, 0.55 / max(cos(lat), 0.12),
-      abs(fract(lonDeg / 15.0 + 0.5) - 0.5) * 15.0);
-    float equator = 1.0 - smoothstep(0.0, 0.7, abs(latDeg));
-    float grid = clamp(max(latLine, lonLine) * 0.42 + equator * 0.45, 0.0, 1.0);
-    color = mix(color, vec3(0.55, 0.88, 0.96), grid * limb * 0.5);
-  }
-
-  float rim = smoothstep(0.94, 1.0, rho);
-  color += vec3(0.16, 0.52, 0.7) * rim * 0.3;
-  outColor = vec4(color, 1.0);
-}`;
-
-function quantizedHex(red: number, green: number, blue: number) {
-  return (
-    "#" +
-    [red & 0xf8, green & 0xf8, blue & 0xf8]
-      .map((value) => value.toString(16).padStart(2, "0"))
-      .join("")
-      .toUpperCase()
-  );
-}
-
-function compileShader(gl: WebGL2RenderingContext, type: number, source: string) {
-  const shader = gl.createShader(type);
-  if (!shader) return null;
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    console.error(gl.getShaderInfoLog(shader));
-    gl.deleteShader(shader);
-    return null;
-  }
-  return shader;
-}
-
-function createProgram(gl: WebGL2RenderingContext) {
-  const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
-  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
-  if (!vertex || !fragment) return null;
-  const program = gl.createProgram();
-  if (!program) return null;
-  gl.attachShader(program, vertex);
-  gl.attachShader(program, fragment);
-  gl.linkProgram(program);
-  gl.deleteShader(vertex);
-  gl.deleteShader(fragment);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    console.error(gl.getProgramInfoLog(program));
-    gl.deleteProgram(program);
-    return null;
-  }
-  return program;
-}
-
-type Sampler = { data: Uint8ClampedArray; width: number; height: number };
+// 국명 라벨은 디테일 텍스처에만 새겨진다. 기본 텍스처는 색상 픽킹용이라 깨끗해야 한다.
+const DETAIL_ZOOM_THRESHOLD = 1;
+type BorderLayer = "COAST" | "LEGAL" | "ACTIVE" | "INACTIVE" | "GUERRILLA";
+const BORDER_LAYERS: readonly BorderLayer[] = ["COAST", "LEGAL", "ACTIVE", "INACTIVE", "GUERRILLA"];
+const DEFAULT_BORDER_LAYERS: Record<BorderLayer, boolean> = {
+  COAST: false,
+  LEGAL: false,
+  ACTIVE: false,
+  INACTIVE: false,
+  GUERRILLA: false,
+};
 
 export function GlobeMap({
   mapId,
@@ -178,9 +106,13 @@ export function GlobeMap({
   ownCountryId,
   ownCountry,
   relations,
+  mapModeData,
+  gameClock,
   turnOpen,
   inboxCount,
   children,
+  mode = "diplomacy",
+  construction,
 }: {
   mapId: string;
   rasterRevision: number;
@@ -190,22 +122,128 @@ export function GlobeMap({
   ownCountryId: string;
   ownCountry: OwnCountry;
   relations: Relation[];
+  mapModeData: MapModeDatum[];
+  gameClock: GlobeGameClock;
   turnOpen: boolean;
   inboxCount: number;
-  children: ReactNode;
+  children?: ReactNode;
+  mode?: "diplomacy" | "construction";
+  construction?: Omit<ConstructionWorkspaceProps, "compact" | "selectedCityId" | "onSelectCity">;
 }) {
+  const constructionMode = mode === "construction" && Boolean(construction);
+  type TextureWindow = { left: number; top: number; width: number; height: number };
+  type ElevationAtlas = {
+    canvas: HTMLCanvasElement;
+    bounds: TextureWindow;
+    stride: number;
+  };
+
+  const visibleTextureWindow = useCallback(
+    (
+      canvas: HTMLCanvasElement,
+      view: { lon: number; lat: number; zoom: number },
+      projection: MapProjection,
+      fit: ProjectionFit,
+      dossierOpen: boolean,
+    ): TextureWindow | null => {
+      if (view.zoom < DETAIL_ZOOM_THRESHOLD) return null;
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      const panelWidth = dossierOpen
+        ? constructionMode
+          ? width * 0.4
+          : Math.min(560, width * 0.46)
+        : 0;
+      const panelInset = panelWidth;
+      const usableWidth = Math.max(1, width - panelWidth);
+      const mapLeft = 0;
+      const points: Array<{ u: number; v: number }> = [];
+      for (let row = 0; row <= 8; row += 1) {
+        for (let column = 0; column <= 10; column += 1) {
+          const point = globePointToLonLat(
+            mapLeft + (usableWidth * column) / 10,
+            (height * row) / 8,
+            width,
+            height,
+            panelInset,
+            view,
+          );
+          if (point) points.push(projectToUv(projection, point.lon, point.lat, fit));
+        }
+      }
+      if (!points.length) return null;
+      let left = Math.min(...points.map((point) => point.u));
+      let right = Math.max(...points.map((point) => point.u));
+      let top = Math.min(...points.map((point) => point.v));
+      let bottom = Math.max(...points.map((point) => point.v));
+      if (right - left > 0.72) {
+        left = 0;
+        right = 1;
+      }
+      const horizontalPadding = Math.max(0.012, (right - left) * 0.08);
+      const verticalPadding = Math.max(0.012, (bottom - top) * 0.08);
+      left = Math.max(0, left - horizontalPadding);
+      right = Math.min(1, right + horizontalPadding);
+      top = Math.max(0, top - verticalPadding);
+      bottom = Math.min(1, bottom + verticalPadding);
+      if (right - left < 0.005 || bottom - top < 0.005) return null;
+      return { left, top, width: right - left, height: bottom - top };
+    },
+    [constructionMode],
+  );
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glRef = useRef<WebGL2RenderingContext | null>(null);
   const programRef = useRef<WebGLProgram | null>(null);
   const uniformsRef = useRef<Record<string, WebGLUniformLocation | null>>({});
-  const textureRef = useRef<WebGLTexture | null>(null);
+  const baseTextureRef = useRef<WebGLTexture | null>(null);
+  const detailTextureRef = useRef<WebGLTexture | null>(null);
+  const elevationTextureRef = useRef<WebGLTexture | null>(null);
+  const elevationReadyRef = useRef(false);
+  const elevationDetailTextureRef = useRef<WebGLTexture | null>(null);
+  const elevationDetailBoundsRef = useRef<TextureWindow>({ left: 0, top: 0, width: 1, height: 1 });
+  const elevationDetailReadyRef = useRef(false);
+  const elevationDetailAtlasRef = useRef<ElevationAtlas | null>(null);
+  const elevationDetailPendingRef = useRef<Omit<ElevationAtlas, "canvas"> | null>(null);
+  const elevationDetailLoadRef = useRef(0);
+  const elevationDetailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const elevationDetailAbortRef = useRef<AbortController | null>(null);
+  const elevationDetailTextureSizeRef = useRef(768);
+  const detailBoundsRef = useRef<TextureWindow>({ left: 0, top: 0, width: 1, height: 1 });
+  const detailReadyRef = useRef(false);
+  const detailLoadRef = useRef(0);
+  const detailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detailTextureSizeRef = useRef(2048);
+  const queueDetailTextureRef = useRef<(delay?: number) => void>(() => undefined);
+  const queueElevationDetailRef = useRef<(delay?: number) => void>(() => undefined);
   const samplerRef = useRef<Sampler | null>(null);
+  const labelHostRef = useRef<SVGGElement>(null);
+  const labelLayerRef = useRef<GlobeLabelLayer | null>(null);
+  const cityHostRef = useRef<HTMLCanvasElement>(null);
+  const cityLayerRef = useRef<GlobeCityLayer | null>(null);
+  const citySourceRef = useRef<GlobeCitySource[]>([]);
+  const cityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cityRefreshFrameRef = useRef(0);
+  const cityCatalogRef = useRef<GlobeCitySource[] | null>(null);
+  const cityCatalogPendingRef = useRef(false);
+  const cityPopulationThresholdRef = useRef<number | null>(null);
+  const administrativeBoundaryHostRef = useRef<HTMLCanvasElement>(null);
+  const administrativeBoundaryLayerRef = useRef<GlobeAdministrativeBoundaryLayer | null>(null);
+  const satelliteCanvasRef = useRef<HTMLCanvasElement>(null);
+  const satelliteLayerRef = useRef<SatelliteConstellationLayer | null>(null);
+  const labelSourceRef = useRef<GlobeLabelSource[]>([]);
   const centroidsRef = useRef<Map<string, { lon: number; lat: number }>>(new Map());
+  const seaColorRef = useRef<[number, number, number]>(DEFAULT_SEA_COLOR);
   const fitRef = useRef<ProjectionFit>(IDENTITY_FIT);
-  const viewRef = useRef({ lon: 0, lat: 18, zoom: DEFAULT_ZOOM });
+  const initialZoom = constructionMode ? 1.65 : DEFAULT_ZOOM;
+  const viewRef = useRef({ lon: 0, lat: 18, zoom: initialZoom });
   const dragRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const frameRef = useRef(0);
   const animationRef = useRef(0);
+  const zoomAnimationRef = useRef(0);
+  const zoomTargetRef = useRef(initialZoom);
+  const zoomPreviousFrameRef = useRef(0);
+  const celestialAnimationRef = useRef(0);
   const touchedRef = useRef(false);
   const assignmentsRef = useRef(
     new Map(colorAssignments.map((item) => [item.colorHex.toUpperCase(), item.countryId])),
@@ -213,15 +251,154 @@ export function GlobeMap({
 
   const [status, setStatus] = useState<"loading" | "ready" | "unsupported" | "failed">("loading");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [boundaryPoint, setBoundaryPoint] = useState<{ lon: number; lat: number } | null>(null);
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const [details, setDetails] = useState<DiplomacyDetail | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const [homeLocated, setHomeLocated] = useState(false);
-  const [showBorders, setShowBorders] = useState(true);
-  const [showGrid, setShowGrid] = useState(false);
+  const borderLayers = DEFAULT_BORDER_LAYERS;
+  const showGrid = false;
   const [inboxOpen, setInboxOpen] = useState(false);
-  const dossierOpen = Boolean(selectedId);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [countrySearch, setCountrySearch] = useState("");
+  const [mapMode, setMapMode] = useState<MapMode | null>(null);
+  const [showSatellites, setShowSatellites] = useState(false);
+  const [showCities, setShowCities] = useState(true);
+  const [constructionCityId, setConstructionCityId] = useState(construction?.cities[0]?.id ?? "");
+  const showSatellitesRef = useRef(false);
+  const showCitiesRef = useRef(true);
+  const dossierOpen = constructionMode || Boolean(selectedId);
+  const constructionCitySourceIds = useMemo(
+    () => construction?.cities.map((city) => city.cityId) ?? [],
+    [construction],
+  );
+  const selectedConstructionCity = construction?.cities.find(
+    (city) => city.id === constructionCityId,
+  );
 
+  const countryDisplayColors = useMemo(() => {
+    let colors = new Map<string, string>();
+    if (mapMode === "GDP" || mapMode === "GDP_PER_CAPITA" || mapMode === "POPULATION") {
+      colors = quantitativeMapColors(
+        mapModeData.map((datum) => {
+          const population = datum.population === null ? null : Number(datum.population);
+          const nominalGdp = datum.nominalGdp === null ? null : Number(datum.nominalGdp);
+          const value =
+            mapMode === "GDP"
+              ? nominalGdp
+              : mapMode === "POPULATION"
+                ? population
+                : nominalGdp !== null && population && population > 0
+                  ? (nominalGdp * 1_000_000) / population
+                  : null;
+          return { countryId: datum.countryId, value };
+        }),
+      );
+    } else if (mapMode === "BLOC" || mapMode === "ECONOMIC_BLOC") {
+      colors = new Map(
+        mapModeData.map((datum) => [
+          datum.countryId,
+          (mapMode === "BLOC" ? datum.diplomaticBlocColor : datum.economicBlocColor) ?? "#343A40",
+        ]),
+      );
+    }
+    return colors;
+  }, [mapMode, mapModeData]);
+  const countryDisplayColorsRef = useRef(countryDisplayColors);
+
+  const recoloredCanvas = useCallback((sampler: Sampler) => {
+    if (!countryDisplayColorsRef.current.size) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = sampler.width;
+    canvas.height = sampler.height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.putImageData(
+      new ImageData(
+        recolorMapPixels(sampler, assignmentsRef.current, countryDisplayColorsRef.current),
+        sampler.width,
+        sampler.height,
+      ),
+      0,
+      0,
+    );
+    return canvas;
+  }, []);
+
+  useEffect(() => {
+    const handleMapMode = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          mode: MapMode | null;
+          showSatellites: boolean;
+          showCities?: boolean;
+        }>
+      ).detail;
+      setMapMode(detail.mode);
+      setShowSatellites(detail.showSatellites);
+      setShowCities(detail.showCities ?? true);
+    };
+    window.addEventListener("game-map-mode-change", handleMapMode);
+    const requestFrame = window.requestAnimationFrame(() => {
+      window.dispatchEvent(new Event("game-map-mode-request"));
+    });
+    return () => {
+      window.cancelAnimationFrame(requestFrame);
+      window.removeEventListener("game-map-mode-change", handleMapMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSearchOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [searchOpen]);
+
+  const borderLayerKey = BORDER_LAYERS.filter(
+    (kind) => kind !== "COAST" && borderLayers[kind],
+  ).join(",");
+  const resolveGameInstant = useCallback(
+    (now = new Date()) =>
+      currentGameInstant({
+        gameDateStart: gameClock.gameDateStart,
+        gameDateEnd: gameClock.gameDateEnd,
+        deadlineAt: gameClock.deadlineAt ? new Date(gameClock.deadlineAt) : null,
+        intervalRealDays: gameClock.intervalRealDays,
+        now,
+      }) ?? new Date(`${gameClock.gameDateEnd}T12:00:00.000Z`),
+    [gameClock],
+  );
+  const drawSatellites = useCallback(
+    (time = performance.now()) => {
+      const canvas = satelliteCanvasRef.current;
+      const layer = satelliteLayerRef.current;
+      if (!canvas || !layer) return;
+      const ratio = Math.min(2, window.devicePixelRatio || 1);
+      const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+      const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      const panelWidth = dossierOpen
+        ? constructionMode
+          ? canvas.clientWidth * 0.4
+          : Math.min(560, canvas.clientWidth * 0.46)
+        : 0;
+      layer.draw({
+        width,
+        height,
+        panelInset: panelWidth * ratio,
+        pixelRatio: ratio,
+        view: viewRef.current,
+        visible: showSatellitesRef.current,
+        time,
+      });
+    },
+    [constructionMode, dossierOpen],
+  );
   const render = useCallback(() => {
     const gl = glRef.current;
     const canvas = canvasRef.current;
@@ -237,10 +414,16 @@ export function GlobeMap({
     const uniforms = uniformsRef.current;
     const view = viewRef.current;
     // 우측 외교 서류창이 열리면 구체를 왼쪽으로 밀어 가려지지 않게 한다.
-    const panelWidth = dossierOpen ? Math.min(560, canvas.clientWidth * 0.46) : 0;
+    const panelWidth = dossierOpen
+      ? constructionMode
+        ? canvas.clientWidth * 0.4
+        : Math.min(560, canvas.clientWidth * 0.46)
+      : 0;
+    const panelInset = panelWidth;
     gl.viewport(0, 0, width, height);
     gl.useProgram(program);
-    gl.uniform2f(uniforms.center ?? null, (width - panelWidth * ratio) / 2, height / 2);
+    gl.uniform2f(uniforms.center ?? null, (width - panelInset * ratio) / 2, height / 2);
+    gl.uniform2f(uniforms.resolution ?? null, width, height);
     gl.uniform1f(uniforms.radius ?? null, (Math.min(width, height) / 2) * view.zoom);
     gl.uniform1f(uniforms.lon0 ?? null, (view.lon * Math.PI) / 180);
     gl.uniform1f(uniforms.lat0 ?? null, (view.lat * Math.PI) / 180);
@@ -252,9 +435,81 @@ export function GlobeMap({
       fitRef.current.scaleU,
       fitRef.current.scaleV,
     );
+    gl.uniform3f(uniforms.seaColor ?? null, ...seaColorRef.current);
     gl.uniform1f(uniforms.grid ?? null, showGrid ? 1 : 0);
+    gl.uniform1f(uniforms.coastline ?? null, borderLayers.COAST ? 1 : 0);
+    const detailBounds = detailBoundsRef.current;
+    gl.uniform4f(
+      uniforms.detailBounds ?? null,
+      detailBounds.left,
+      detailBounds.top,
+      detailBounds.width,
+      detailBounds.height,
+    );
+    gl.uniform1f(uniforms.detailReady ?? null, detailReadyRef.current ? 1 : 0);
+    gl.uniform1f(uniforms.elevationReady ?? null, elevationReadyRef.current ? 1 : 0);
+    const elevationDetailBounds = elevationDetailBoundsRef.current;
+    gl.uniform4f(
+      uniforms.elevationDetailBounds ?? null,
+      elevationDetailBounds.left,
+      elevationDetailBounds.top,
+      elevationDetailBounds.width,
+      elevationDetailBounds.height,
+    );
+    gl.uniform1f(uniforms.elevationDetailReady ?? null, elevationDetailReadyRef.current ? 1 : 0);
+
+    const celestial = celestialPositions(resolveGameInstant());
+    const sunViewDirection = celestialDirectionFromCamera(
+      celestial.sun,
+      view.lon,
+      view.lat,
+      view.zoom,
+    );
+    const moonViewDirection = celestialDirectionFromCamera(
+      celestial.moon,
+      view.lon,
+      view.lat,
+      view.zoom,
+    );
+    gl.uniform3f(uniforms.sunDirection ?? null, ...celestial.sun.direction);
+    gl.uniform3f(uniforms.moonDirection ?? null, ...celestial.moon.direction);
+    gl.uniform3f(uniforms.sunViewDirection ?? null, ...sunViewDirection);
+    gl.uniform3f(uniforms.moonViewDirection ?? null, ...moonViewDirection);
+    gl.uniform1f(uniforms.sunAngularRadius ?? null, celestial.sun.angularRadius);
+    gl.uniform1f(uniforms.moonAngularRadius ?? null, celestial.moon.angularRadius);
+    gl.uniform1f(uniforms.moonIllumination ?? null, celestial.moonIllumination);
+    gl.uniform1f(uniforms.celestialReady ?? null, 1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-  }, [dossierOpen, projection, showGrid]);
+    drawSatellites();
+    labelLayerRef.current?.draw({
+      width: canvas.clientWidth,
+      height: canvas.clientHeight,
+      panelInset,
+      view,
+    });
+    if (showCitiesRef.current) {
+      cityLayerRef.current?.draw({
+        width: canvas.clientWidth,
+        height: canvas.clientHeight,
+        panelInset,
+        view,
+      });
+    }
+    administrativeBoundaryLayerRef.current?.draw({
+      width: canvas.clientWidth,
+      height: canvas.clientHeight,
+      panelInset,
+      view,
+    });
+  }, [
+    borderLayers.COAST,
+    constructionMode,
+    dossierOpen,
+    drawSatellites,
+    projection,
+    resolveGameInstant,
+    showGrid,
+  ]);
 
   const scheduleRender = useCallback(() => {
     if (frameRef.current) return;
@@ -263,6 +518,406 @@ export function GlobeMap({
       render();
     });
   }, [render]);
+
+  const loadDetailTexture = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !rasterRevision) return;
+    const bounds = visibleTextureWindow(
+      canvas,
+      viewRef.current,
+      projection,
+      fitRef.current,
+      dossierOpen,
+    );
+    const loadId = ++detailLoadRef.current;
+    if (!bounds) {
+      detailReadyRef.current = false;
+      scheduleRender();
+      return;
+    }
+    const requestBounds = Object.fromEntries(
+      Object.entries(bounds).map(([key, value]) => [key, Number(value.toFixed(6))]),
+    ) as TextureWindow;
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.decoding = "async";
+    image.onload = () => {
+      if (loadId !== detailLoadRef.current) return;
+      const gl = glRef.current;
+      const texture = detailTextureRef.current;
+      if (!gl || !texture) return;
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+      const offscreen = document.createElement("canvas");
+      offscreen.width = image.naturalWidth;
+      offscreen.height = image.naturalHeight;
+      const context = offscreen.getContext("2d", { willReadFrequently: true });
+      context?.drawImage(image, 0, 0);
+      const pixels = context?.getImageData(0, 0, offscreen.width, offscreen.height);
+      const display = pixels
+        ? recoloredCanvas({ data: pixels.data, width: pixels.width, height: pixels.height })
+        : null;
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, display ?? image);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      detailBoundsRef.current = requestBounds;
+      detailReadyRef.current = true;
+      scheduleRender();
+    };
+    image.onerror = () => {
+      if (loadId !== detailLoadRef.current) return;
+      detailReadyRef.current = false;
+      scheduleRender();
+    };
+    const params = new URLSearchParams({
+      mapId,
+      v: String(rasterRevision),
+      pv: "3",
+      layers: borderLayerKey,
+      size: String(detailTextureSizeRef.current),
+      left: String(requestBounds.left),
+      top: String(requestBounds.top),
+      width: String(requestBounds.width),
+      height: String(requestBounds.height),
+    });
+    image.src = `/api/map/globe/texture?${params.toString()}`;
+  }, [
+    borderLayerKey,
+    dossierOpen,
+    mapId,
+    projection,
+    rasterRevision,
+    recoloredCanvas,
+    scheduleRender,
+    visibleTextureWindow,
+  ]);
+
+  const loadElevationDetailTexture = useCallback(async () => {
+    const detailView = { ...viewRef.current, zoom: zoomTargetRef.current };
+    const visibleBounds = elevationVisibleWindow(detailView);
+    const desiredBounds = elevationDetailWindow(detailView);
+    if (!visibleBounds || !desiredBounds) {
+      elevationDetailAbortRef.current?.abort();
+      elevationDetailAbortRef.current = null;
+      elevationDetailLoadRef.current += 1;
+      elevationDetailPendingRef.current = null;
+      elevationDetailReadyRef.current = false;
+      scheduleRender();
+      return;
+    }
+
+    const wrapUnit = (value: number) => ((value % 1) + 1) % 1;
+    const normalized = (bounds: TextureWindow): TextureWindow => ({
+      ...bounds,
+      left: wrapUnit(bounds.left),
+    });
+    const textureSize = elevationDetailTextureSizeRef.current;
+    const desiredStride = elevationWindowStride(desiredBounds, textureSize);
+    const atlas = elevationDetailAtlasRef.current;
+    if (
+      atlas &&
+      atlas.stride <= desiredStride &&
+      elevationWindowContains(normalized(atlas.bounds), visibleBounds)
+    ) {
+      elevationDetailBoundsRef.current = normalized(atlas.bounds);
+      elevationDetailReadyRef.current = true;
+      scheduleRender();
+      return;
+    }
+    const pending = elevationDetailPendingRef.current;
+    if (
+      pending &&
+      pending.stride <= desiredStride &&
+      elevationWindowContains(normalized(pending.bounds), visibleBounds)
+    ) {
+      return;
+    }
+
+    const loadId = ++elevationDetailLoadRef.current;
+    elevationDetailAbortRef.current?.abort();
+    const abortController = new AbortController();
+    elevationDetailAbortRef.current = abortController;
+    const nextBounds = { ...desiredBounds };
+    if (atlas) {
+      const atlasCenter = atlas.bounds.left + atlas.bounds.width / 2;
+      const nextCenter = nextBounds.left + nextBounds.width / 2;
+      nextBounds.left += Math.round(atlasCenter - nextCenter);
+    }
+    elevationDetailPendingRef.current = { bounds: nextBounds, stride: desiredStride };
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round((nextBounds.width * 21_600) / desiredStride));
+    canvas.height = Math.max(1, Math.round((nextBounds.height * 10_800) / desiredStride));
+    const context = canvas.getContext("2d");
+    if (!context) {
+      abortController.abort();
+      if (elevationDetailAbortRef.current === abortController) {
+        elevationDetailAbortRef.current = null;
+      }
+      elevationDetailPendingRef.current = null;
+      return;
+    }
+
+    const missing: TextureWindow[] = [nextBounds];
+    if (atlas?.stride === desiredStride) {
+      const old = atlas.bounds;
+      const overlapLeft = Math.max(old.left, nextBounds.left);
+      const overlapTop = Math.max(old.top, nextBounds.top);
+      const overlapRight = Math.min(old.left + old.width, nextBounds.left + nextBounds.width);
+      const overlapBottom = Math.min(old.top + old.height, nextBounds.top + nextBounds.height);
+      if (overlapRight > overlapLeft && overlapBottom > overlapTop) {
+        const sourceX = ((overlapLeft - old.left) / old.width) * atlas.canvas.width;
+        const sourceY = ((overlapTop - old.top) / old.height) * atlas.canvas.height;
+        const sourceWidth = ((overlapRight - overlapLeft) / old.width) * atlas.canvas.width;
+        const sourceHeight = ((overlapBottom - overlapTop) / old.height) * atlas.canvas.height;
+        const targetX = ((overlapLeft - nextBounds.left) / nextBounds.width) * canvas.width;
+        const targetY = ((overlapTop - nextBounds.top) / nextBounds.height) * canvas.height;
+        const targetWidth = ((overlapRight - overlapLeft) / nextBounds.width) * canvas.width;
+        const targetHeight = ((overlapBottom - overlapTop) / nextBounds.height) * canvas.height;
+        context.drawImage(
+          atlas.canvas,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          targetX,
+          targetY,
+          targetWidth,
+          targetHeight,
+        );
+
+        missing.length = 0;
+        if (overlapTop > nextBounds.top) {
+          missing.push({
+            left: nextBounds.left,
+            top: nextBounds.top,
+            width: nextBounds.width,
+            height: overlapTop - nextBounds.top,
+          });
+        }
+        if (overlapBottom < nextBounds.top + nextBounds.height) {
+          missing.push({
+            left: nextBounds.left,
+            top: overlapBottom,
+            width: nextBounds.width,
+            height: nextBounds.top + nextBounds.height - overlapBottom,
+          });
+        }
+        if (overlapLeft > nextBounds.left) {
+          missing.push({
+            left: nextBounds.left,
+            top: overlapTop,
+            width: overlapLeft - nextBounds.left,
+            height: overlapBottom - overlapTop,
+          });
+        }
+        if (overlapRight < nextBounds.left + nextBounds.width) {
+          missing.push({
+            left: overlapRight,
+            top: overlapTop,
+            width: nextBounds.left + nextBounds.width - overlapRight,
+            height: overlapBottom - overlapTop,
+          });
+        }
+      }
+    }
+
+    const loadRegion = async (bounds: TextureWindow) => {
+      const params = new URLSearchParams({
+        size: String(textureSize),
+        stride: String(desiredStride),
+        left: String(Number(wrapUnit(bounds.left).toFixed(6))),
+        top: String(Number(bounds.top.toFixed(6))),
+        width: String(Number(bounds.width.toFixed(6))),
+        height: String(Number(bounds.height.toFixed(6))),
+      });
+      const response = await fetch(`/api/map/elevation?${params.toString()}`, {
+        cache: "force-cache",
+        signal: abortController.signal,
+      });
+      if (!response.ok) throw new Error(`Elevation ${response.status}`);
+      const source = URL.createObjectURL(await response.blob());
+      try {
+        const image = new Image();
+        image.decoding = "async";
+        await new Promise<void>((resolve, reject) => {
+          image.onload = () => resolve();
+          image.onerror = reject;
+          image.src = source;
+        });
+        return { bounds, image };
+      } finally {
+        URL.revokeObjectURL(source);
+      }
+    };
+
+    try {
+      const regions = await Promise.all(
+        missing.filter((bounds) => bounds.width > 0 && bounds.height > 0).map(loadRegion),
+      );
+      if (loadId !== elevationDetailLoadRef.current) return;
+      for (const region of regions) {
+        const targetX = ((region.bounds.left - nextBounds.left) / nextBounds.width) * canvas.width;
+        const targetY = ((region.bounds.top - nextBounds.top) / nextBounds.height) * canvas.height;
+        const targetWidth = (region.bounds.width / nextBounds.width) * canvas.width;
+        const targetHeight = (region.bounds.height / nextBounds.height) * canvas.height;
+        context.drawImage(region.image, targetX, targetY, targetWidth, targetHeight);
+      }
+      const gl = glRef.current;
+      const texture = elevationDetailTextureRef.current;
+      if (!gl || !texture) return;
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      elevationDetailAtlasRef.current = { canvas, bounds: nextBounds, stride: desiredStride };
+      elevationDetailBoundsRef.current = normalized(nextBounds);
+      elevationDetailReadyRef.current = true;
+      scheduleRender();
+    } catch {
+      if (loadId === elevationDetailLoadRef.current && !elevationDetailAtlasRef.current) {
+        elevationDetailReadyRef.current = false;
+        scheduleRender();
+      }
+    } finally {
+      if (loadId === elevationDetailLoadRef.current) {
+        elevationDetailPendingRef.current = null;
+        if (elevationDetailAbortRef.current === abortController) {
+          elevationDetailAbortRef.current = null;
+        }
+      }
+    }
+  }, [scheduleRender]);
+
+  const refreshCityLayer = useCallback(() => {
+    if (cityRefreshFrameRef.current) return;
+    cityRefreshFrameRef.current = window.requestAnimationFrame(() => {
+      cityRefreshFrameRef.current = 0;
+      const catalog = cityCatalogRef.current;
+      if (!catalog) return;
+      const threshold = cityPopulationThreshold(viewRef.current.zoom);
+      if (threshold === cityPopulationThresholdRef.current) {
+        scheduleRender();
+        return;
+      }
+      cityPopulationThresholdRef.current = threshold;
+      const visibleCities = citiesForZoom(catalog, viewRef.current.zoom);
+      if (constructionMode && constructionCitySourceIds.length) {
+        const visibleById = new Map(visibleCities.map((city) => [city.id, city]));
+        const selectableIds = new Set(constructionCitySourceIds);
+        for (const city of catalog) {
+          if (selectableIds.has(city.id)) visibleById.set(city.id, city);
+        }
+        citySourceRef.current = [...visibleById.values()];
+      } else {
+        citySourceRef.current = visibleCities;
+      }
+      cityLayerRef.current?.setCities(citySourceRef.current);
+      scheduleRender();
+    });
+  }, [constructionCitySourceIds, constructionMode, scheduleRender]);
+
+  const loadCities = useCallback(() => {
+    if (cityCatalogRef.current) {
+      refreshCityLayer();
+      return;
+    }
+    if (cityCatalogPendingRef.current) return;
+    cityCatalogPendingRef.current = true;
+    const params = new URLSearchParams({
+      north: "90",
+      south: "-90",
+      west: "-180",
+      east: "180",
+      minPopulation: "50000",
+      limit: "20000",
+    });
+    fetch(`/api/map/cities?${params.toString()}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`City source ${response.status}`);
+        return response.json() as Promise<{ cities?: GlobeCitySource[] }>;
+      })
+      .then((payload) => {
+        cityCatalogRef.current = payload.cities ?? [];
+        refreshCityLayer();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        cityCatalogPendingRef.current = false;
+      });
+  }, [refreshCityLayer]);
+
+  const queueCities = useCallback(
+    (delay = 40) => {
+      if (cityTimerRef.current) clearTimeout(cityTimerRef.current);
+      cityTimerRef.current = setTimeout(() => {
+        cityTimerRef.current = null;
+        loadCities();
+      }, delay);
+    },
+    [loadCities],
+  );
+
+  const queueElevationDetail = useCallback(
+    (delay = 140) => {
+      if (elevationDetailTimerRef.current) clearTimeout(elevationDetailTimerRef.current);
+      elevationDetailTimerRef.current = setTimeout(() => {
+        elevationDetailTimerRef.current = null;
+        void loadElevationDetailTexture();
+      }, delay);
+    },
+    [loadElevationDetailTexture],
+  );
+
+  const queueDetailTexture = useCallback(
+    (delay = 180) => {
+      if (detailTimerRef.current) clearTimeout(detailTimerRef.current);
+      detailTimerRef.current = setTimeout(loadDetailTexture, delay);
+      queueElevationDetail(Math.min(delay, 140));
+      queueCities(Math.min(delay, 40));
+    },
+    [loadDetailTexture, queueCities, queueElevationDetail],
+  );
+
+  useEffect(() => {
+    queueDetailTextureRef.current = queueDetailTexture;
+  }, [queueDetailTexture]);
+
+  useEffect(() => {
+    queueElevationDetailRef.current = queueElevationDetail;
+  }, [queueElevationDetail]);
+
+  useEffect(() => {
+    countryDisplayColorsRef.current = countryDisplayColors;
+    const gl = glRef.current;
+    const texture = baseTextureRef.current;
+    const sampler = samplerRef.current;
+    if (gl && texture && sampler) {
+      const display = recoloredCanvas(sampler);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+      if (display) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, display);
+      } else {
+        const original = document.createElement("canvas");
+        original.width = sampler.width;
+        original.height = sampler.height;
+        original
+          .getContext("2d")
+          ?.putImageData(new ImageData(new Uint8ClampedArray(sampler.data), sampler.width), 0, 0);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, original);
+      }
+      detailReadyRef.current = false;
+      scheduleRender();
+      queueDetailTextureRef.current(0);
+    }
+  }, [countryDisplayColors, recoloredCanvas, scheduleRender]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -279,54 +934,115 @@ export function GlobeMap({
       return;
     }
     glRef.current = gl;
+    detailTextureSizeRef.current =
+      Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) >= DETAIL_TEXTURE_WIDTH
+        ? DETAIL_TEXTURE_WIDTH
+        : 2048;
+    elevationDetailTextureSizeRef.current = 768;
     programRef.current = program;
-    uniformsRef.current = {
-      center: gl.getUniformLocation(program, "uCenter"),
-      radius: gl.getUniformLocation(program, "uRadius"),
-      lon0: gl.getUniformLocation(program, "uLon0"),
-      lat0: gl.getUniformLocation(program, "uLat0"),
-      mode: gl.getUniformLocation(program, "uMode"),
-      fit: gl.getUniformLocation(program, "uFit"),
-      grid: gl.getUniformLocation(program, "uGrid"),
-      map: gl.getUniformLocation(program, "uMap"),
+    uniformsRef.current = globeUniformLocations(gl, program);
+    const createTexture = (unit: number) => {
+      const texture = gl.createTexture();
+      gl.activeTexture(unit);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        1,
+        1,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        new Uint8Array([12, 20, 30, 255]),
+      );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      return texture;
     };
-    const texture = gl.createTexture();
-    textureRef.current = texture;
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA,
-      1,
-      1,
-      0,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      new Uint8Array([12, 20, 30, 255]),
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    const baseTexture = createTexture(gl.TEXTURE0);
+    const detailTexture = createTexture(gl.TEXTURE1);
+    const elevationTexture = createTexture(gl.TEXTURE2);
+    const elevationDetailTexture = createTexture(gl.TEXTURE3);
+    baseTextureRef.current = baseTexture;
+    detailTextureRef.current = detailTexture;
+    elevationTextureRef.current = elevationTexture;
+    elevationDetailTextureRef.current = elevationDetailTexture;
+    elevationReadyRef.current = false;
+    elevationDetailReadyRef.current = false;
     gl.useProgram(program);
     gl.uniform1i(uniformsRef.current.map ?? null, 0);
+    gl.uniform1i(uniformsRef.current.detailMap ?? null, 1);
+    gl.uniform1i(uniformsRef.current.elevation ?? null, 2);
+    gl.uniform1i(uniformsRef.current.elevationDetail ?? null, 3);
     gl.activeTexture(gl.TEXTURE0);
 
-    const observer = new ResizeObserver(() => scheduleRender());
+    let active = true;
+    const elevationImage = new Image();
+    elevationImage.decoding = "async";
+    elevationImage.onload = () => {
+      if (!active) return;
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, elevationTexture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, elevationImage);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      elevationReadyRef.current = true;
+      scheduleRender();
+    };
+    elevationImage.onerror = () => {
+      if (!active) return;
+      elevationReadyRef.current = false;
+      scheduleRender();
+    };
+    elevationImage.src = "/map/etopo-2022-relief-rg.png";
+
+    const observer = new ResizeObserver(() => {
+      scheduleRender();
+      queueDetailTextureRef.current();
+    });
     observer.observe(canvas);
     scheduleRender();
 
     return () => {
+      active = false;
       observer.disconnect();
       if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
       if (animationRef.current) window.cancelAnimationFrame(animationRef.current);
+      if (detailTimerRef.current) clearTimeout(detailTimerRef.current);
+      if (elevationDetailTimerRef.current) clearTimeout(elevationDetailTimerRef.current);
+      if (cityTimerRef.current) clearTimeout(cityTimerRef.current);
+      if (cityRefreshFrameRef.current) window.cancelAnimationFrame(cityRefreshFrameRef.current);
       frameRef.current = 0;
       animationRef.current = 0;
-      gl.deleteTexture(texture);
+      detailTimerRef.current = null;
+      elevationDetailTimerRef.current = null;
+      detailLoadRef.current += 1;
+      elevationDetailLoadRef.current += 1;
+      elevationDetailAbortRef.current?.abort();
+      elevationDetailAbortRef.current = null;
+      gl.deleteTexture(baseTexture);
+      gl.deleteTexture(detailTexture);
+      gl.deleteTexture(elevationTexture);
+      gl.deleteTexture(elevationDetailTexture);
       gl.deleteProgram(program);
       glRef.current = null;
       programRef.current = null;
-      textureRef.current = null;
+      baseTextureRef.current = null;
+      detailTextureRef.current = null;
+      elevationTextureRef.current = null;
+      elevationDetailTextureRef.current = null;
+      elevationReadyRef.current = false;
+      elevationDetailReadyRef.current = false;
+      elevationDetailAtlasRef.current = null;
+      elevationDetailPendingRef.current = null;
+      cityTimerRef.current = null;
+      cityRefreshFrameRef.current = 0;
     };
   }, [scheduleRender]);
 
@@ -334,16 +1050,56 @@ export function GlobeMap({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const view = viewRef.current;
+    const animateZoom = (now: number) => {
+      const elapsed = zoomPreviousFrameRef.current
+        ? Math.min(48, now - zoomPreviousFrameRef.current)
+        : 16;
+      zoomPreviousFrameRef.current = now;
+      const current = view.zoom;
+      const target = zoomTargetRef.current;
+      const blend = 1 - Math.exp(-elapsed / 82);
+      const next = current + (target - current) * blend;
+      view.zoom = Math.abs(target - next) < 0.0005 ? target : next;
+      scheduleRender();
+      if (view.zoom !== target) {
+        zoomAnimationRef.current = window.requestAnimationFrame(animateZoom);
+      } else {
+        zoomAnimationRef.current = 0;
+        zoomPreviousFrameRef.current = 0;
+        queueDetailTexture(0);
+      }
+    };
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       touchedRef.current = true;
-      const factor = Math.exp(-event.deltaY * 0.0014);
-      viewRef.current.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, viewRef.current.zoom * factor));
-      scheduleRender();
+      const unit =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? 16
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? canvas.clientHeight
+            : 1;
+      const delta = Math.max(-240, Math.min(240, event.deltaY * unit));
+      const factor = Math.exp(-delta * 0.00135);
+      zoomTargetRef.current = Math.max(
+        MIN_ZOOM,
+        Math.min(MAX_ZOOM, zoomTargetRef.current * factor),
+      );
+      queueElevationDetailRef.current(90);
+      if (!zoomAnimationRef.current) {
+        zoomPreviousFrameRef.current = 0;
+        zoomAnimationRef.current = window.requestAnimationFrame(animateZoom);
+      }
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", onWheel);
-  }, [scheduleRender]);
+    return () => {
+      canvas.removeEventListener("wheel", onWheel);
+      if (zoomAnimationRef.current) window.cancelAnimationFrame(zoomAnimationRef.current);
+      zoomAnimationRef.current = 0;
+      zoomPreviousFrameRef.current = 0;
+      zoomTargetRef.current = view.zoom;
+    };
+  }, [queueDetailTexture, scheduleRender]);
 
   useEffect(() => {
     assignmentsRef.current = new Map(
@@ -352,6 +1108,9 @@ export function GlobeMap({
   }, [colorAssignments]);
 
   useEffect(() => {
+    detailLoadRef.current += 1;
+    detailReadyRef.current = false;
+    scheduleRender();
     if (!rasterRevision) return;
     let active = true;
     const image = new Image();
@@ -375,6 +1134,9 @@ export function GlobeMap({
           height: offscreen.height,
         };
         const bounds = detectMapBounds(samplerRef.current);
+        seaColorRef.current =
+          detectSeaColor(samplerRef.current, assignmentsRef.current, Boolean(bounds)) ??
+          DEFAULT_SEA_COLOR;
         if (bounds) {
           fitRef.current = boundsFit(bounds, offscreen.width, offscreen.height);
           extendMapEdges(samplerRef.current, bounds);
@@ -387,15 +1149,15 @@ export function GlobeMap({
           assignmentsRef.current,
         );
         const home = centroidsRef.current.get(ownCountryId);
-        setHomeLocated(Boolean(home));
         if (home && !touchedRef.current) {
           viewRef.current.lon = home.lon;
           viewRef.current.lat = home.lat;
         }
       }
       // 가장자리를 늘린 결과를 GPU도 같이 쓰도록 캔버스를 올린다. 2D 컨텍스트가 없으면 원본을 쓴다.
-      if (gl && textureRef.current) {
-        gl.bindTexture(gl.TEXTURE_2D, textureRef.current);
+      if (gl && baseTextureRef.current) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, baseTextureRef.current);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
         gl.texImage2D(
           gl.TEXTURE_2D,
@@ -403,27 +1165,203 @@ export function GlobeMap({
           gl.RGBA,
           gl.RGBA,
           gl.UNSIGNED_BYTE,
-          context ? offscreen : image,
+          context ? (recoloredCanvas(samplerRef.current!) ?? offscreen) : image,
         );
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       }
+      labelLayerRef.current?.setLabels(labelSourceRef.current, projection, fitRef.current);
       setStatus("ready");
+      queueDetailTextureRef.current(0);
       scheduleRender();
     };
     image.onerror = () => {
       if (active) setStatus("failed");
     };
-    image.src = `/api/map/globe?mapId=${encodeURIComponent(mapId)}&v=${rasterRevision}&borders=${
-      showBorders ? "1" : "0"
-    }&size=${TEXTURE_WIDTH}`;
+    image.src = `/api/map/globe/texture?mapId=${encodeURIComponent(mapId)}&v=${rasterRevision}&pv=3&layers=${encodeURIComponent(borderLayerKey)}&size=${BASE_TEXTURE_WIDTH}`;
     return () => {
       active = false;
     };
-  }, [mapId, ownCountryId, projection, rasterRevision, scheduleRender, showBorders]);
+  }, [
+    borderLayerKey,
+    mapId,
+    ownCountryId,
+    projection,
+    rasterRevision,
+    recoloredCanvas,
+    scheduleRender,
+  ]);
+
+  useEffect(() => {
+    const host = administrativeBoundaryHostRef.current;
+    if (!host) return;
+    const layer = createGlobeAdministrativeBoundaryLayer(host);
+    administrativeBoundaryLayerRef.current = layer;
+    scheduleRender();
+    return () => {
+      layer.clear();
+      administrativeBoundaryLayerRef.current = null;
+    };
+  }, [scheduleRender]);
+
+  useEffect(() => {
+    const layer = administrativeBoundaryLayerRef.current;
+    if (!layer) return;
+    if (!boundaryPoint) {
+      layer.clear();
+      scheduleRender();
+      return;
+    }
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      v: "2",
+      lon: boundaryPoint.lon.toFixed(6),
+      lat: boundaryPoint.lat.toFixed(6),
+    });
+    layer.clear();
+    scheduleRender();
+    fetch(`/api/map/administrative-boundaries?${params.toString()}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Administrative boundaries ${response.status}`);
+        return response.json() as Promise<{ boundaries?: AdministrativeBoundarySource[] }>;
+      })
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        layer.setBoundaries(payload.boundaries ?? []);
+        scheduleRender();
+      })
+      .catch((error) => {
+        if (error instanceof Error && error.name === "AbortError") return;
+        layer.clear();
+        scheduleRender();
+      });
+    return () => controller.abort();
+  }, [boundaryPoint, scheduleRender]);
+
+  useEffect(() => {
+    const host = labelHostRef.current;
+    if (!host) return;
+    const layer = createGlobeLabelLayer(host);
+    labelLayerRef.current = layer;
+    layer.setLabels(labelSourceRef.current, projection, fitRef.current);
+    scheduleRender();
+    return () => {
+      layer.clear();
+      labelLayerRef.current = null;
+    };
+  }, [projection, scheduleRender]);
+
+  useEffect(() => {
+    const host = cityHostRef.current;
+    if (!host) return;
+    const layer = createGlobeCityLayer(host);
+    cityLayerRef.current = layer;
+    layer.setCities(citySourceRef.current);
+    scheduleRender();
+    queueCities(0);
+    return () => {
+      layer.clear();
+      cityLayerRef.current = null;
+    };
+  }, [queueCities, scheduleRender]);
+
+  useEffect(() => {
+    cityLayerRef.current?.setInteractiveCities(
+      constructionMode ? constructionCitySourceIds : [],
+      constructionMode ? (selectedConstructionCity?.cityId ?? null) : null,
+    );
+    scheduleRender();
+  }, [
+    constructionCitySourceIds,
+    constructionMode,
+    scheduleRender,
+    selectedConstructionCity?.cityId,
+  ]);
+
+  useEffect(() => {
+    showCitiesRef.current = showCities;
+    if (showCities) queueCities(0);
+    scheduleRender();
+  }, [queueCities, scheduleRender, showCities]);
+
+  useEffect(() => {
+    const canvas = satelliteCanvasRef.current;
+    if (!canvas) return;
+    const gl = canvas.getContext("webgl2", {
+      alpha: true,
+      antialias: false,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: false,
+      powerPreference: "high-performance",
+    });
+    if (!gl) return;
+    const layer = createSatelliteConstellationLayer(gl);
+    satelliteLayerRef.current = layer;
+    drawSatellites();
+    return () => {
+      layer.clear();
+      satelliteLayerRef.current = null;
+    };
+  }, [drawSatellites]);
+
+  useEffect(() => {
+    showSatellitesRef.current = showSatellites;
+    drawSatellites();
+    if (!showSatellites) return;
+    let frame = 0;
+    let previous = 0;
+    const animate = (now: number) => {
+      if (now - previous >= 50) {
+        previous = now;
+        drawSatellites(now);
+      }
+      frame = window.requestAnimationFrame(animate);
+    };
+    frame = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frame);
+  }, [drawSatellites, showSatellites]);
+
+  useEffect(() => {
+    let previous = 0;
+    const animate = (now: number) => {
+      if (now - previous >= 80) {
+        previous = now;
+        render();
+      }
+      celestialAnimationRef.current = window.requestAnimationFrame(animate);
+    };
+    celestialAnimationRef.current = window.requestAnimationFrame(animate);
+    return () => {
+      window.cancelAnimationFrame(celestialAnimationRef.current);
+      celestialAnimationRef.current = 0;
+    };
+  }, [render]);
+
+  useEffect(() => {
+    if (!rasterRevision) return;
+    let active = true;
+    fetch(`/api/map/globe/labels?mapId=${encodeURIComponent(mapId)}&v=${rasterRevision}`)
+      .then((response) => (response.ok ? response.json() : { labels: [] }))
+      .then((payload: { labels?: GlobeLabelSource[] }) => {
+        if (!active) return;
+        labelSourceRef.current = payload.labels ?? [];
+        labelLayerRef.current?.setLabels(labelSourceRef.current, projection, fitRef.current);
+        scheduleRender();
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [mapId, projection, rasterRevision, scheduleRender]);
 
   useEffect(() => {
     scheduleRender();
   }, [scheduleRender, showGrid]);
+
+  useEffect(() => {
+    queueDetailTexture();
+  }, [dossierOpen, queueDetailTexture]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -453,28 +1391,20 @@ export function GlobeMap({
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const bounds = canvas.getBoundingClientRect();
-    const radius = (Math.min(bounds.width, bounds.height) / 2) * viewRef.current.zoom;
-    const inset = dossierOpen ? Math.min(560, bounds.width * 0.46) : 0;
-    const x = (clientX - bounds.left - (bounds.width - inset) / 2) / radius;
-    const y = (bounds.height / 2 - (clientY - bounds.top)) / radius;
-    const rho = Math.hypot(x, y);
-    if (rho > 1) return null;
-    const view = viewRef.current;
-    const lat0 = (view.lat * Math.PI) / 180;
-    const lon0 = (view.lon * Math.PI) / 180;
-    const c = Math.asin(Math.min(1, rho));
-    const sinC = Math.sin(c);
-    const cosC = Math.cos(c);
-    if (rho < 1e-6) return { lon: view.lon, lat: view.lat };
-    const lat = Math.asin(
-      Math.max(-1, Math.min(1, cosC * Math.sin(lat0) + (y * sinC * Math.cos(lat0)) / rho)),
+    const panelWidth = dossierOpen
+      ? constructionMode
+        ? bounds.width * 0.4
+        : Math.min(560, bounds.width * 0.46)
+      : 0;
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    return globePointToLonLat(
+      ((clientX - bounds.left) * canvas.width) / bounds.width,
+      ((clientY - bounds.top) * canvas.height) / bounds.height,
+      canvas.width,
+      canvas.height,
+      panelWidth * ratio,
+      viewRef.current,
     );
-    const lon =
-      lon0 + Math.atan2(x * sinC, rho * cosC * Math.cos(lat0) - y * sinC * Math.sin(lat0));
-    return {
-      lon: (((((lon * 180) / Math.PI + 180) % 360) + 360) % 360) - 180,
-      lat: (lat * 180) / Math.PI,
-    };
   }
 
   function countryAt(clientX: number, clientY: number) {
@@ -507,7 +1437,10 @@ export function GlobeMap({
       viewRef.current.lat = start.lat + (target.lat - start.lat) * eased;
       render();
       if (progress < 1) animationRef.current = window.requestAnimationFrame(step);
-      else animationRef.current = 0;
+      else {
+        animationRef.current = 0;
+        queueDetailTexture(0);
+      }
     };
     animationRef.current = window.requestAnimationFrame(step);
   }
@@ -563,6 +1496,7 @@ export function GlobeMap({
       drag.y = event.clientY;
       if (hover) setHover(null);
       scheduleRender();
+      queueDetailTexture(140);
       return;
     }
     const countryId = countryAt(event.clientX, event.clientY);
@@ -584,38 +1518,140 @@ export function GlobeMap({
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (!drag || drag.moved) return;
+    if (!drag) return;
+    if (drag.moved) {
+      queueDetailTexture(0);
+      return;
+    }
+    if (constructionMode && construction) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const city = cityLayerRef.current?.hitTest(
+        event.clientX - bounds.left,
+        event.clientY - bounds.top,
+      );
+      const campaignCity = city
+        ? construction.cities.find((item) => item.cityId === city.id)
+        : null;
+      if (campaignCity) setConstructionCityId(campaignCity.id);
+      return;
+    }
+    const point = screenToLonLat(event.clientX, event.clientY);
+    setBoundaryPoint(point);
     const countryId = countryAt(event.clientX, event.clientY);
     if (!countryId || countryId === ownCountryId) return;
+    playCountrySelectSound();
     openCountry(countryId, false);
   }
 
-  function resetView() {
-    animateTo({ lon: 0, lat: 18 });
-    viewRef.current.zoom = DEFAULT_ZOOM;
-    scheduleRender();
-  }
-
-  function focusOwnCountry() {
-    const centroid = centroidsRef.current.get(ownCountryId);
-    if (centroid) animateTo(centroid);
+  function handleContextMenu(event: React.MouseEvent<HTMLCanvasElement>) {
+    event.preventDefault();
+    const countryId = countryAt(event.clientX, event.clientY);
+    if (!countryId || countryId === ownCountryId) return;
+    playCountrySelectSound();
+    openCountry(countryId, false);
   }
 
   const selected = countries.find((country) => country.id === selectedId) ?? null;
   const hoveredCountry = hover ? countries.find((country) => country.id === hover.id) : null;
-  const rosterCountries = countries.filter((country) => country.id !== ownCountryId);
+  const hoveredMapDatum = hover ? mapModeData.find((datum) => datum.countryId === hover.id) : null;
+  const hoveredMapValue = (() => {
+    if (!hoveredMapDatum) return null;
+    if (!mapMode) return null;
+    const gdp = hoveredMapDatum.nominalGdp === null ? null : Number(hoveredMapDatum.nominalGdp);
+    const population =
+      hoveredMapDatum.population === null ? null : Number(hoveredMapDatum.population);
+    if (mapMode === "GDP") {
+      return gdp === null ? "GDP 자료 없음" : `GDP $${gdp.toLocaleString("ko-KR")}M`;
+    }
+    if (mapMode === "GDP_PER_CAPITA") {
+      const value =
+        gdp === null || !population
+          ? "1인당 GDP 자료 없음"
+          : `1인당 GDP $${Math.round((gdp * 1_000_000) / population).toLocaleString("ko-KR")}`;
+      return value;
+    }
+    if (mapMode === "POPULATION") {
+      const value =
+        population === null
+          ? "인구 자료 없음"
+          : `인구 ${Math.round(population).toLocaleString("ko-KR")}명`;
+      return value;
+    }
+    const value =
+      mapMode === "BLOC"
+        ? (hoveredMapDatum.diplomaticBlocName ?? "소속 세력 없음")
+        : (hoveredMapDatum.economicBlocName ?? "소속 경제권 없음");
+    return value;
+  })();
+  const normalizedSearch = countrySearch.trim().toLocaleLowerCase("ko-KR");
+  const rosterCountries = normalizedSearch
+    ? countries
+        .filter(
+          (country) =>
+            country.id !== ownCountryId &&
+            `${country.name} ${country.code}`.toLocaleLowerCase("ko-KR").includes(normalizedSearch),
+        )
+        .slice(0, 30)
+    : [];
 
   return (
-    <div className={`globe-stage ${dossierOpen ? "has-diplomacy-dossier" : ""}`}>
+    <div
+      className={`globe-stage ${dossierOpen ? "has-diplomacy-dossier" : ""} ${constructionMode ? "has-construction-panel" : ""}`}
+    >
       <canvas
         ref={canvasRef}
         className="globe-canvas"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onContextMenu={handleContextMenu}
         onPointerLeave={() => setHover(null)}
         aria-label="구체 세계 지도"
       />
+      <canvas
+        ref={satelliteCanvasRef}
+        className="satellite-constellation-layer"
+        aria-hidden="true"
+      />
+      <canvas
+        ref={administrativeBoundaryHostRef}
+        className="globe-administrative-boundary-layer"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 6,
+          pointerEvents: "none",
+        }}
+        aria-hidden="true"
+      />
+      <canvas
+        ref={cityHostRef}
+        className="globe-city-layer"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 7,
+          display: showCities ? "block" : "none",
+          pointerEvents: "none",
+          fontFamily: "var(--title)",
+        }}
+        aria-hidden="true"
+      />
+      <svg className="globe-label-layer" aria-hidden="true">
+        <g ref={labelHostRef} />
+      </svg>
+
+      {showSatellites ? (
+        <div className="satellite-constellation-legend" aria-label="위성통신망 범례">
+          <span data-network="starlink">STARLINK</span>
+          <span data-network="europe">EUROPE</span>
+          <span data-network="china">CHINA</span>
+        </div>
+      ) : null}
 
       {status !== "ready" && (
         <div className="globe-status">
@@ -624,57 +1660,6 @@ export function GlobeMap({
           {status === "failed" && "지도 텍스처를 불러오지 못했습니다."}
         </div>
       )}
-
-      <div className="globe-hud globe-hud-top">
-        <span className="globe-brand">
-          <b>{ownCountry.flag}</b>
-          {ownCountry.name}
-        </span>
-        <span className={`globe-channel ${turnOpen ? "open" : ""}`}>
-          {turnOpen ? "외교 채널 개방" : "외교 채널 폐쇄"}
-        </span>
-      </div>
-
-      <div className="globe-hud globe-hud-bottom">
-        <button
-          type="button"
-          onClick={focusOwnCountry}
-          disabled={!homeLocated}
-          title={homeLocated ? "자국 영토로 시점 이동" : "지도에 배정된 자국 영토가 없습니다."}
-        >
-          자국 위치
-        </button>
-        <button type="button" onClick={resetView}>
-          시점 초기화
-        </button>
-        <label>
-          <input
-            type="checkbox"
-            checked={showBorders}
-            onChange={(event) => setShowBorders(event.target.checked)}
-            autoComplete="off"
-            suppressHydrationWarning
-          />
-          국경선
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={showGrid}
-            onChange={(event) => setShowGrid(event.target.checked)}
-            autoComplete="off"
-            suppressHydrationWarning
-          />
-          경위선
-        </label>
-        <button
-          type="button"
-          className={inboxOpen ? "active" : ""}
-          onClick={() => setInboxOpen((open) => !open)}
-        >
-          외교 전문 {inboxCount}
-        </button>
-      </div>
 
       {hover && hoveredCountry && (
         <div
@@ -685,39 +1670,79 @@ export function GlobeMap({
           <i style={{ background: hoveredCountry.color }} />
           {hoveredCountry.name}
           {hoveredCountry.id === ownCountryId && <em>자국</em>}
+          {hoveredMapValue ? <em>{hoveredMapValue}</em> : null}
         </div>
       )}
 
-      <aside className="diplomacy-country-rail globe-rail" aria-label="국가 목록">
-        <h2>국가 목록</h2>
-        <div className="diplomacy-rail-list">
-          {rosterCountries.length === 0 ? (
-            <p>다른 국가가 없습니다.</p>
-          ) : (
-            rosterCountries.map((country) => {
-              const relation = relations.find((item) => item.toCountryId === country.id);
-              const score = relation?.score ?? 0;
-              return (
-                <button
-                  type="button"
-                  key={country.id}
-                  className={country.id === selectedId ? "active" : ""}
-                  onClick={() => openCountry(country.id)}
-                  title={country.name}
-                >
-                  <i style={{ background: country.color }} />
-                  <span>{country.name}</span>
-                  <b className={score >= 25 ? "warm" : score > -25 ? "neutral" : "cold"}>
-                    {score > 0 ? `+${score}` : score}
-                  </b>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </aside>
+      {!constructionMode && (
+        <aside className="globe-left-dock-sector" aria-label="검색, 알림 및 외교 전문">
+          <div className="globe-search-field">
+            <input
+              type="search"
+              value={countrySearch}
+              onChange={(event) => setCountrySearch(event.target.value)}
+              onFocus={() => setSearchOpen(true)}
+              placeholder="국가 검색"
+              aria-label="국가 검색어"
+              aria-controls="globe-country-search"
+            />
 
-      {inboxOpen && (
+            {searchOpen && normalizedSearch ? (
+              <aside
+                className="diplomacy-country-rail globe-rail globe-search-results"
+                id="globe-country-search"
+                aria-label="국가 검색 결과"
+              >
+                <div className="diplomacy-rail-list">
+                  {rosterCountries.length === 0 ? (
+                    <p>검색 결과가 없습니다.</p>
+                  ) : (
+                    rosterCountries.map((country) => {
+                      const relation = relations.find((item) => item.toCountryId === country.id);
+                      const score = relation?.score ?? 0;
+                      return (
+                        <button
+                          type="button"
+                          key={country.id}
+                          data-click-sound="country"
+                          className={country.id === selectedId ? "active" : ""}
+                          onClick={() => {
+                            setSearchOpen(false);
+                            playCountrySelectSound();
+                            openCountry(country.id);
+                          }}
+                          title={country.name}
+                        >
+                          <i style={{ background: country.color }} />
+                          <span>{country.name}</span>
+                          <b className={score >= 25 ? "warm" : score > -25 ? "neutral" : "cold"}>
+                            {score > 0 ? `+${score}` : score}
+                          </b>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </aside>
+            ) : null}
+          </div>
+
+          <button
+            type="button"
+            className={inboxOpen ? "globe-sector-action open" : "globe-sector-action"}
+            aria-expanded={inboxOpen}
+            onClick={() => {
+              setSearchOpen(false);
+              setInboxOpen((open) => !open);
+            }}
+          >
+            <span>외교 전문</span>
+            <strong>{inboxCount}</strong>
+          </button>
+        </aside>
+      )}
+
+      {!constructionMode && inboxOpen && (
         <section className="globe-drawer" aria-label="외교 전문 기록">
           <header>
             <h2>외교 전문 기록</h2>
@@ -729,7 +1754,7 @@ export function GlobeMap({
         </section>
       )}
 
-      {selected && (
+      {!constructionMode && selected && (
         <TnoDiplomacyPanel
           selected={selected}
           own={ownCountry}
@@ -744,173 +1769,46 @@ export function GlobeMap({
           }}
         />
       )}
+
+      {constructionMode && construction && (
+        <aside
+          className="construction-map-panel"
+          aria-label="도시 건설"
+          style={{
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: "auto",
+            width: "40vw",
+            minWidth: 0,
+            borderColor: "rgba(134, 231, 227, 0.82)",
+            boxShadow:
+              "inset 0 0 0 2px rgba(111, 227, 227, 0.34), -12px 0 38px rgba(0, 0, 0, 0.55), 0 0 18px rgba(111, 227, 227, 0.12)",
+          }}
+        >
+          <header
+            className="construction-map-titlebar"
+            style={{ borderBottomColor: "rgba(134, 231, 227, 0.72)" }}
+          >
+            <div>
+              <span>국토 개발</span>
+              <h2>건설</h2>
+            </div>
+            <div>
+              <b>{construction.cities.length}</b>
+              <span>통제 도시</span>
+              <b>{construction.projects.length}</b>
+              <span>대기열</span>
+            </div>
+          </header>
+          <ConstructionWorkspace
+            {...construction}
+            compact
+            selectedCityId={constructionCityId}
+            onSelectCity={setConstructionCityId}
+          />
+        </aside>
+      )}
     </div>
   );
-}
-
-function sampleCountry(
-  sampler: Sampler,
-  projection: MapProjection,
-  fit: ProjectionFit,
-  assignments: Map<string, string>,
-  lon: number,
-  lat: number,
-) {
-  const uv = projectToUv(projection, lon, lat, fit);
-  const x = Math.max(0, Math.min(sampler.width - 1, Math.round(uv.u * (sampler.width - 1))));
-  const y = Math.max(0, Math.min(sampler.height - 1, Math.round(uv.v * (sampler.height - 1))));
-  const index = (y * sampler.width + x) * 4;
-  if (sampler.data[index + 3] < 128) return null;
-  return (
-    assignments.get(
-      quantizedHex(sampler.data[index], sampler.data[index + 1], sampler.data[index + 2]),
-    ) ?? null
-  );
-}
-
-function samePixel(data: Uint8ClampedArray, index: number, target: number[], tolerance = 12) {
-  return (
-    Math.abs(data[index] - target[0]) <= tolerance &&
-    Math.abs(data[index + 1] - target[1]) <= tolerance &&
-    Math.abs(data[index + 2] - target[2]) <= tolerance
-  );
-}
-
-/** 투영 경계에 그려진 검은 윤곽선 두께. 8픽셀 이상은 지형으로 보고 멈춘다. */
-const MAX_OUTLINE_PX = 8;
-
-function isOutline(data: Uint8ClampedArray, index: number) {
-  return data[index] + data[index + 1] + data[index + 2] <= 96;
-}
-
-/**
- * 타원형 투영 이미지는 지도 밖이 배경색으로 채워져 있다. 적도(중앙 가로줄)와
- * 본초자오선(중앙 세로줄)은 투영 경계에 정확히 맞닿으므로, 두 줄에서 배경이 끝나는
- * 지점을 찾아 지도 본체의 실제 사각형을 측정한다. 범례 같은 장식은 중앙 십자선을
- * 건드리지 않으므로 영향을 주지 않는다.
- *
- * 경계에는 보통 검은 윤곽선이 그려져 있어, 경도 ±180을 샘플링하면 그 선이 자오선
- * 틈처럼 보인다. 윤곽선 두께를 재서 그만큼 안쪽으로 물러나고, 바이리니어 보간이
- * 윤곽선을 물지 않도록 2픽셀을 더 남긴다.
- */
-function detectMapBounds(sampler: Sampler) {
-  const { data, width, height } = sampler;
-  const background = [data[0], data[1], data[2]];
-  const midY = Math.floor(height / 2);
-  const midX = Math.floor(width / 2);
-  const rowIndex = (x: number) => (midY * width + x) * 4;
-  const columnIndex = (y: number) => (y * width + midX) * 4;
-
-  let left = 0;
-  while (left < width - 1 && samePixel(data, rowIndex(left), background)) left += 1;
-  let right = width - 1;
-  while (right > left && samePixel(data, rowIndex(right), background)) right -= 1;
-  let top = 0;
-  while (top < height - 1 && samePixel(data, columnIndex(top), background)) top += 1;
-  let bottom = height - 1;
-  while (bottom > top && samePixel(data, columnIndex(bottom), background)) bottom -= 1;
-
-  const usable = right - left + 1 >= width * 0.5 && bottom - top + 1 >= height * 0.5;
-  if (!usable) return null;
-
-  let leftInset = 0;
-  while (leftInset < MAX_OUTLINE_PX && isOutline(data, rowIndex(left + leftInset))) leftInset += 1;
-  let rightInset = 0;
-  while (rightInset < MAX_OUTLINE_PX && isOutline(data, rowIndex(right - rightInset)))
-    rightInset += 1;
-  let topInset = 0;
-  while (topInset < MAX_OUTLINE_PX && isOutline(data, columnIndex(top + topInset))) topInset += 1;
-  let bottomInset = 0;
-  while (bottomInset < MAX_OUTLINE_PX && isOutline(data, columnIndex(bottom - bottomInset)))
-    bottomInset += 1;
-
-  const margin = 2;
-  return {
-    left: left + leftInset + margin,
-    right: right - rightInset - margin,
-    top: top + topInset + margin,
-    bottom: bottom - bottomInset - margin,
-  };
-}
-
-/** 경계 밖으로 늘려둘 폭. 이 지도의 타원은 표준식과 최대 13픽셀 어긋난다. */
-const EDGE_EXTENSION_PX = 28;
-
-/**
- * 투영 공식으로 계산한 타원 경계와 이미지에 그려진 실제 경계는 완전히 일치하지 않는다.
- * 어긋난 만큼 경도 ±180 근처에서 배경색과 검은 윤곽선이 자오선 틈처럼 보이므로,
- * 각 행의 가장자리 색을 지도 밖으로 늘려 그 오차를 흡수한다. 지도는 중앙 경선을 축으로
- * 좌우 대칭이므로, 범례 같은 장식이 없는 오른쪽 경계를 재서 왼쪽은 대칭으로 구한다.
- */
-function extendMapEdges(sampler: Sampler, bounds: { left: number; right: number }) {
-  const { data, width, height } = sampler;
-  const background = [data[0], data[1], data[2]];
-  const centerX = (bounds.left + bounds.right) / 2;
-  const index = (x: number, y: number) => (y * width + x) * 4;
-  const paint = (from: number, to: number, y: number, source: number) => {
-    for (let x = Math.max(0, from); x <= Math.min(width - 1, to); x += 1) {
-      const target = index(x, y);
-      data[target] = data[source];
-      data[target + 1] = data[source + 1];
-      data[target + 2] = data[source + 2];
-    }
-  };
-
-  for (let y = 0; y < height; y += 1) {
-    let edge = width - 1;
-    while (edge > centerX && samePixel(data, index(edge, y), background)) edge -= 1;
-    if (edge <= centerX) continue;
-
-    let clean = edge;
-    while (clean > centerX && edge - clean < MAX_OUTLINE_PX && isOutline(data, index(clean, y)))
-      clean -= 1;
-    paint(clean + 1, edge + EDGE_EXTENSION_PX, y, index(clean, y));
-
-    // 왼쪽 경계는 대칭으로 잡고, 확실히 안쪽인 지점부터 되짚어 깨끗한 첫 픽셀을 찾는다.
-    const mirrored = Math.round(2 * centerX - edge);
-    let leftClean = Math.max(0, Math.min(width - 1, mirrored + MAX_OUTLINE_PX));
-    const limit = Math.max(0, mirrored - MAX_OUTLINE_PX);
-    while (leftClean > limit) {
-      const previous = index(leftClean - 1, y);
-      if (isOutline(data, previous) || samePixel(data, previous, background)) break;
-      leftClean -= 1;
-    }
-    paint(mirrored - EDGE_EXTENSION_PX, leftClean - 1, y, index(leftClean, y));
-  }
-}
-
-/** 1도 격자를 훑어 국가별 중심 좌표를 구한다. 레일에서 국가를 고르면 그 지점으로 회전한다. */
-function buildCentroids(
-  sampler: Sampler,
-  projection: MapProjection,
-  fit: ProjectionFit,
-  assignments: Map<string, string>,
-) {
-  const accumulator = new Map<string, { x: number; y: number; z: number; weight: number }>();
-  for (let lat = -89; lat <= 89; lat += 1) {
-    const weight = Math.cos((lat * Math.PI) / 180);
-    for (let lon = -180; lon < 180; lon += 1) {
-      const countryId = sampleCountry(sampler, projection, fit, assignments, lon, lat);
-      if (!countryId) continue;
-      const latRad = (lat * Math.PI) / 180;
-      const lonRad = (lon * Math.PI) / 180;
-      const entry = accumulator.get(countryId) ?? { x: 0, y: 0, z: 0, weight: 0 };
-      entry.x += Math.cos(latRad) * Math.cos(lonRad) * weight;
-      entry.y += Math.cos(latRad) * Math.sin(lonRad) * weight;
-      entry.z += Math.sin(latRad) * weight;
-      entry.weight += weight;
-      accumulator.set(countryId, entry);
-    }
-  }
-  const centroids = new Map<string, { lon: number; lat: number }>();
-  for (const [countryId, entry] of accumulator) {
-    if (entry.weight <= 0) continue;
-    const length = Math.hypot(entry.x, entry.y, entry.z);
-    if (length < 1e-9) continue;
-    centroids.set(countryId, {
-      lon: (Math.atan2(entry.y, entry.x) * 180) / Math.PI,
-      lat: (Math.asin(entry.z / length) * 180) / Math.PI,
-    });
-  }
-  return centroids;
 }

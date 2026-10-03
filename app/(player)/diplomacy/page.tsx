@@ -1,9 +1,15 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { respondToDiplomaticProposalAction } from "@/src/actions/diplomacy";
 import { requireSession } from "@/src/auth/session";
 import { db } from "@/src/db";
 import {
   countryProfileRevisions,
+  demographicSnapshots,
+  diplomaticBlocMembers,
+  diplomaticBlocs,
+  economicBlocMembers,
+  economicBlocs,
+  economicSnapshots,
   mapRasterColorAssignments,
   mapRasters,
   politicalSnapshots,
@@ -13,6 +19,7 @@ import { getDiplomacyDesk } from "@/src/db/queries/diplomacy";
 import { getPrimaryCampaignMap } from "@/src/db/queries/maps";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { parseMapProjection } from "@/src/domain/map/projection";
+import { adjudicationRealDayInterval } from "@/src/domain/turn/schedule";
 import { GlobeMap } from "@/src/ui/globe-map";
 
 export const metadata = { title: "외교·세계 지도" };
@@ -37,13 +44,30 @@ const PROPOSAL_STATUS_LABELS: Record<string, string> = {
   EXPIRED: "만료",
 };
 
+const PROPOSAL_INTENT_LABELS: Record<string, string> = {
+  ALLIANCE_FOUNDATION: "세력 창설",
+  MUTUAL_DEFENSE: "상호방위조약",
+  INDEPENDENCE_GUARANTEE: "독립 보장",
+  TRUCE: "휴전",
+};
+
 export default async function DiplomacyPage() {
   const session = await requireSession();
   const context = await getViewerContext(session.user.id);
   if (!context.campaign || !context.country || !context.turn) return null;
   const primaryMap = await getPrimaryCampaignMap(context.campaign.id);
   if (!primaryMap) return null;
-  const [desk, raster, colorAssignments, ownProfile, ownPolitical] = await Promise.all([
+  const [
+    desk,
+    raster,
+    colorAssignments,
+    ownProfile,
+    ownPolitical,
+    economicRows,
+    demographicRows,
+    diplomaticBlocRows,
+    economicBlocRows,
+  ] = await Promise.all([
     getDiplomacyDesk(context.campaign.id, context.country.id),
     db.query.mapRasters.findFirst({
       where: eq(mapRasters.mapId, primaryMap.id),
@@ -66,8 +90,58 @@ export default async function DiplomacyPage() {
       .where(eq(politicalSnapshots.countryId, context.country.id))
       .orderBy(desc(turns.sequence))
       .limit(1),
+    db
+      .select({ countryId: economicSnapshots.countryId, nominalGdp: economicSnapshots.nominalGdp })
+      .from(economicSnapshots)
+      .where(eq(economicSnapshots.turnId, context.turn.id)),
+    db
+      .select({
+        countryId: demographicSnapshots.countryId,
+        population: demographicSnapshots.population,
+      })
+      .from(demographicSnapshots)
+      .where(eq(demographicSnapshots.turnId, context.turn.id)),
+    db
+      .select({
+        countryId: diplomaticBlocMembers.countryId,
+        color: diplomaticBlocs.color,
+        name: diplomaticBlocs.name,
+        acronym: diplomaticBlocs.acronym,
+      })
+      .from(diplomaticBlocMembers)
+      .innerJoin(diplomaticBlocs, eq(diplomaticBlocMembers.blocId, diplomaticBlocs.id))
+      .where(
+        and(
+          eq(diplomaticBlocs.campaignId, context.campaign.id),
+          eq(diplomaticBlocs.status, "ACTIVE"),
+        ),
+      ),
+    db
+      .select({
+        countryId: economicBlocMembers.countryId,
+        color: economicBlocs.color,
+        name: economicBlocs.name,
+        acronym: economicBlocs.acronym,
+      })
+      .from(economicBlocMembers)
+      .innerJoin(economicBlocs, eq(economicBlocMembers.blocId, economicBlocs.id))
+      .where(
+        and(eq(economicBlocs.campaignId, context.campaign.id), eq(economicBlocs.status, "ACTIVE")),
+      ),
   ]);
   const countryById = new Map(desk.countries.map((country) => [country.id, country]));
+  const economyByCountry = new Map(economicRows.map((row) => [row.countryId, row.nominalGdp]));
+  const populationByCountry = new Map(
+    demographicRows.map((row) => [row.countryId, row.population]),
+  );
+  const diplomaticBlocByCountry = new Map(diplomaticBlocRows.map((row) => [row.countryId, row]));
+  const economicBlocByCountry = new Map(economicBlocRows.map((row) => [row.countryId, row]));
+  const intervalRealDays = adjudicationRealDayInterval(
+    context.campaign.gameTimePerRealDayValue ?? context.campaign.gameDaysPerRealDay,
+    context.campaign.adjudicationIntervalValue ?? context.campaign.adjudicationIntervalGameDays,
+    context.campaign.gameTimePerRealDayUnit ?? "DAY",
+    context.campaign.adjudicationIntervalUnit ?? "DAY",
+  );
   return (
     <GlobeMap
       mapId={primaryMap.id}
@@ -86,6 +160,7 @@ export default async function DiplomacyPage() {
         name: context.country.name,
         code: context.country.code,
         color: context.country.color,
+        entityType: context.country.entityType,
         flag: ownProfile?.flag ?? "⚑",
         stability: ownPolitical[0]?.snapshot.stability ?? null,
       }}
@@ -94,6 +169,25 @@ export default async function DiplomacyPage() {
         score,
         tags,
       }))}
+      mapModeData={desk.countries.map((country) => ({
+        countryId: country.id,
+        nominalGdp: economyByCountry.get(country.id) ?? null,
+        population: populationByCountry.get(country.id) ?? null,
+        diplomaticBlocColor: diplomaticBlocByCountry.get(country.id)?.color ?? null,
+        diplomaticBlocName: diplomaticBlocByCountry.has(country.id)
+          ? `${diplomaticBlocByCountry.get(country.id)!.name} (${diplomaticBlocByCountry.get(country.id)!.acronym})`
+          : null,
+        economicBlocColor: economicBlocByCountry.get(country.id)?.color ?? null,
+        economicBlocName: economicBlocByCountry.has(country.id)
+          ? `${economicBlocByCountry.get(country.id)!.name} (${economicBlocByCountry.get(country.id)!.acronym})`
+          : null,
+      }))}
+      gameClock={{
+        gameDateStart: context.turn.gameDateStart ?? context.turn.gameDateEnd,
+        gameDateEnd: context.turn.gameDateEnd,
+        deadlineAt: context.turn.deadlineAt?.toISOString() ?? null,
+        intervalRealDays,
+      }}
       turnOpen={context.turn.status === "DRAFT"}
       inboxCount={desk.records.length}
     >
@@ -125,8 +219,10 @@ export default async function DiplomacyPage() {
                       <h3>{proposal.title}</h3>
                       <p>
                         {counterpart?.name ?? "미상"} ·{" "}
-                        {PROPOSAL_TYPE_LABELS[proposal.type] ?? proposal.type} ·{" "}
-                        {proposal.visibility === "PUBLIC" ? "공개" : "비공개"}
+                        {PROPOSAL_INTENT_LABELS[proposal.intent] ??
+                          PROPOSAL_TYPE_LABELS[proposal.type] ??
+                          proposal.type}{" "}
+                        · {proposal.visibility === "PUBLIC" ? "공개" : "비공개"}
                       </p>
                     </div>
                     <span className="diplomacy-record-status">

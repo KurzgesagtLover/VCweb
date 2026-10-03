@@ -14,6 +14,7 @@ const politicsMetrics = [
   "stability",
   "legitimacy",
   "governmentApproval",
+  "policySupport",
   "unrest",
   "stateCapacity",
   "corruption",
@@ -50,8 +51,12 @@ const economicEditorMetrics = {
   policyRate: { kind: "decimal", min: "-0.1", max: "1" },
   currentAccountToGdp: { kind: "decimal", min: "-0.5", max: "0.5" },
   productivityIndex: { kind: "decimal", min: "0", max: "1000" },
+  povertyRate: { kind: "decimal", min: "0", max: "1" },
+  agriculturalProductivityIndex: { kind: "decimal", min: "0.000001", max: "1000" },
+  foodSelfSufficiency: { kind: "decimal", min: "0", max: "2" },
+  industrialCapitalStockIndex: { kind: "decimal", min: "0.000001", max: "1000" },
+  researchCapacityIndex: { kind: "decimal", min: "0.000001", max: "1000" },
   referenceYear: { kind: "integer", min: "1", max: "9999" },
-  currencyCode: { kind: "text", minLength: 1, maxLength: 12 },
   creditRating: { kind: "text", minLength: 1, maxLength: 20 },
   creditRatingAgency: { kind: "text", minLength: 1, maxLength: 80 },
   priceBasis: { kind: "text", minLength: 1, maxLength: 40 },
@@ -202,10 +207,11 @@ export async function createAdminChangeProposalAction(formData: FormData) {
   if (!politicsMetrics.includes(input.metric as (typeof politicsMetrics)[number])) {
     throw new Error("수정할 수 없는 정치 지표입니다.");
   }
-  const value = Number(input.value);
-  if (!Number.isInteger(value) || value < 0 || value > 100)
+  const value = new Decimal(input.value);
+  if (!value.isFinite() || value.lt(0) || value.gt(100) || !value.isInteger()) {
     throw new Error("정치 지표는 0~100 정수여야 합니다.");
-  const afterValue = value;
+  }
+  const afterValue = value.toNumber();
 
   const beforeValue = (snapshot as Record<string, unknown>)[input.metric];
   await db.transaction(async (tx) => {

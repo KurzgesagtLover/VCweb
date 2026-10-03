@@ -3,6 +3,26 @@
 import Image from "next/image";
 import { useMemo, useState } from "react";
 import { sendDiplomaticProposalAction } from "@/src/actions/diplomacy";
+import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
+import { CountryFlag } from "./country-flag";
+
+type StoredDiplomaticStatus =
+  | "NORMAL"
+  | "WAR"
+  | "CIVIL_WAR"
+  | "TRUCE"
+  | "MUTUAL_DEFENSE"
+  | "INDEPENDENCE_GUARANTEE"
+  | "NO_RELATIONS"
+  | "STALEMATE"
+  | "GUERRILLA";
+type DiplomaticBlocSummary = {
+  id: string;
+  name: string;
+  acronym: string;
+  color: string;
+  role: string;
+};
 
 export type DiplomacyDetail = {
   country: {
@@ -12,6 +32,7 @@ export type DiplomacyDetail = {
     color: string;
     isAi: boolean;
     economicSystem: string | null;
+    entityType: string;
     flag: string;
     capital: string | null;
     largestCity: string | null;
@@ -50,7 +71,20 @@ export type DiplomacyDetail = {
     unemploymentRate: string | null;
     debtToGdp: string | null;
   };
-  relation: { score: number; tags: string[]; lastInteraction: string | null };
+  relation: {
+    score: number;
+    tags: string[];
+    lastInteraction: string | null;
+    status: StoredDiplomaticStatus | "ALLIANCE";
+    statusDirection: "SYMMETRIC" | "OUTGOING" | "INCOMING";
+    statusLabel: string;
+    outgoingStatus: StoredDiplomaticStatus;
+    incomingStatus: StoredDiplomaticStatus;
+  };
+  blocs: {
+    own: DiplomaticBlocSummary | null;
+    target: DiplomaticBlocSummary | null;
+  };
   orientation: {
     publicPrinciples: string | null;
     interests: string[];
@@ -80,6 +114,12 @@ export type DiplomacyDetail = {
 };
 
 type ProposalType = "STATEMENT" | "NEGOTIATION" | "TREATY" | "TRADE" | "AID" | "WARNING" | "OTHER";
+type ProposalIntent =
+  | "GENERAL"
+  | "ALLIANCE_FOUNDATION"
+  | "MUTUAL_DEFENSE"
+  | "INDEPENDENCE_GUARANTEE"
+  | "TRUCE";
 
 type DiplomaticAction = {
   id: string;
@@ -90,32 +130,11 @@ type DiplomaticAction = {
   maxRelation?: number;
   review?: boolean;
   danger?: boolean;
+  intent?: ProposalIntent;
   brief: string;
 };
 
 const ACTIONS: DiplomaticAction[] = [
-  {
-    id: "statement",
-    label: "공식 성명 발표",
-    type: "STATEMENT",
-    icon: "◈",
-    brief: "자국 입장을 공개적으로 통보합니다.",
-  },
-  {
-    id: "improve",
-    label: "관계 개선 제안",
-    type: "NEGOTIATION",
-    icon: "◇",
-    brief: "양국 관계 개선을 위한 실무 협의를 요청합니다.",
-  },
-  {
-    id: "summit",
-    label: "정상 회담 요청",
-    type: "NEGOTIATION",
-    icon: "◎",
-    minRelation: -60,
-    brief: "정상 간 직접 회담을 요청합니다.",
-  },
   {
     id: "attache",
     label: "주재 무관 파견",
@@ -123,22 +142,6 @@ const ACTIONS: DiplomaticAction[] = [
     icon: "⌗",
     minRelation: -25,
     brief: "상대국에 상주 무관을 파견합니다.",
-  },
-  {
-    id: "trade",
-    label: "무역 협정 교섭",
-    type: "TRADE",
-    icon: "↔",
-    minRelation: -25,
-    brief: "관세·교역량 조정을 위한 협정을 교섭합니다.",
-  },
-  {
-    id: "intel",
-    label: "정보 공유 요청",
-    type: "OTHER",
-    icon: "◉",
-    minRelation: 25,
-    brief: "정보기관 간 첩보 공유 통로를 요청합니다.",
   },
   {
     id: "aid",
@@ -162,19 +165,40 @@ const ACTIONS: DiplomaticAction[] = [
     id: "guarantee",
     label: "독립 보장",
     type: "TREATY",
+    intent: "INDEPENDENCE_GUARANTEE",
     icon: "♜",
     minRelation: 40,
     review: true,
     brief: "상대국 주권 침해 시 개입을 공개 보장합니다.",
   },
   {
+    id: "alliance",
+    label: "세력 창설 제안",
+    type: "TREATY",
+    intent: "ALLIANCE_FOUNDATION",
+    icon: "◆",
+    minRelation: 40,
+    review: true,
+    brief: "양국을 창설 회원국으로 하는 새 세력권을 제안합니다.",
+  },
+  {
     id: "defense",
     label: "상호 방위 조약",
     type: "TREATY",
+    intent: "MUTUAL_DEFENSE",
     icon: "⛨",
     minRelation: 50,
     review: true,
     brief: "제3국의 침공 시 공동 대응을 약속합니다.",
+  },
+  {
+    id: "truce",
+    label: "휴전 제안",
+    type: "TREATY",
+    intent: "TRUCE",
+    icon: "◫",
+    review: true,
+    brief: "현재의 전쟁 또는 내전을 중단하는 휴전을 제안합니다.",
   },
   {
     id: "transit",
@@ -246,9 +270,11 @@ function compactMoney(value: string | null, scale: string | null) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return "—";
   const suffix = scale === "million" ? "백만" : scale === "billion" ? "십억" : "";
-  if (parsed >= 1_000_000) return `${(parsed / 1_000_000).toFixed(2)}조 ${suffix}`;
-  if (parsed >= 1_000) return `${(parsed / 1_000).toFixed(1)}천 ${suffix}`;
-  return `${parsed.toFixed(0)} ${suffix}`;
+  if (parsed >= 1_000_000)
+    return `${(parsed / 1_000_000).toFixed(2)}조 ${suffix} ${ECONOMY_STATISTICS_CURRENCY}`;
+  if (parsed >= 1_000)
+    return `${(parsed / 1_000).toFixed(1)}천 ${suffix} ${ECONOMY_STATISTICS_CURRENCY}`;
+  return `${parsed.toFixed(0)} ${suffix} ${ECONOMY_STATISTICS_CURRENCY}`;
 }
 
 const SPIRIT_GLYPHS = ["✶", "⚙", "☗", "⚑", "☼", "✦"];
@@ -264,7 +290,14 @@ export function TnoDiplomacyPanel({
   onClose,
 }: {
   selected: { id: string; name: string; code: string; color: string; isAi: boolean };
-  own: { name: string; code: string; color: string; flag: string; stability: number | null };
+  own: {
+    name: string;
+    code: string;
+    color: string;
+    entityType: string;
+    flag: string;
+    stability: number | null;
+  };
   detail: DiplomacyDetail | null;
   loading: boolean;
   turnOpen: boolean;
@@ -303,11 +336,38 @@ export function TnoDiplomacyPanel({
 
   function availability(item: DiplomaticAction) {
     if (!turnOpen) return { ok: false, reason: "제출 기간이 아닙니다." };
+    if (own.entityType === "GUERRILLA_GROUP" || detail?.country.entityType === "GUERRILLA_GROUP") {
+      return { ok: false, reason: "게릴라 단체는 일반 외교를 할 수 없습니다." };
+    }
+    if (detail?.relation.status === "NO_RELATIONS") {
+      return { ok: false, reason: "미수교 상태입니다." };
+    }
     if (item.minRelation !== undefined && score < item.minRelation) {
       return { ok: false, reason: `관계도 ${item.minRelation} 이상 필요` };
     }
     if (item.maxRelation !== undefined && score > item.maxRelation) {
       return { ok: false, reason: `관계도 ${item.maxRelation} 이하에서만 가능` };
+    }
+    if (item.intent === "ALLIANCE_FOUNDATION" && (detail?.blocs.own || detail?.blocs.target)) {
+      return { ok: false, reason: "양국 모두 기존 세력에 속하지 않아야 합니다." };
+    }
+    if (
+      item.intent === "MUTUAL_DEFENSE" &&
+      ["ALLIANCE", "MUTUAL_DEFENSE"].includes(detail?.relation.status ?? "NORMAL")
+    ) {
+      return { ok: false, reason: "이미 공동 방위 관계입니다." };
+    }
+    if (
+      item.intent === "INDEPENDENCE_GUARANTEE" &&
+      detail?.relation.outgoingStatus === "INDEPENDENCE_GUARANTEE"
+    ) {
+      return { ok: false, reason: "이미 상대국의 독립을 보장하고 있습니다." };
+    }
+    if (
+      item.intent === "TRUCE" &&
+      !["WAR", "CIVIL_WAR"].includes(detail?.relation.status ?? "NORMAL")
+    ) {
+      return { ok: false, reason: "전쟁 또는 내전 상태에서만 가능합니다." };
     }
     return { ok: true, reason: item.brief };
   }
@@ -321,9 +381,13 @@ export function TnoDiplomacyPanel({
             {score > 0 ? `+${score}` : score}
           </span>
           <span className="tno-title-flags">
-            <i style={{ borderColor: own.color }}>{own.flag}</i>
+            <i style={{ borderColor: own.color }}>
+              <CountryFlag value={own.flag} name={own.name} />
+            </i>
             <b>→</b>
-            <i style={{ borderColor: selected.color }}>{detail?.country.flag ?? "⚑"}</i>
+            <i style={{ borderColor: selected.color }}>
+              <CountryFlag value={detail?.country.flag} name={selected.name} />
+            </i>
           </span>
           <span className="tno-title-metric" title="상대국 안정도">
             <em>안정</em>
@@ -358,7 +422,7 @@ export function TnoDiplomacyPanel({
 
       <div className="tno-nation-banner">
         <span className="tno-banner-flag" style={{ borderColor: selected.color }}>
-          {detail?.country.flag ?? "⚑"}
+          <CountryFlag value={detail?.country.flag} name={selected.name} />
         </span>
         <div className="tno-banner-text">
           <strong>{selected.name}</strong>
@@ -614,6 +678,18 @@ export function TnoDiplomacyPanel({
                   <em>양국 관계</em>
                   {relationLabel(score)}
                 </span>
+                {detail && detail.relation.status !== "NORMAL" && (
+                  <span>
+                    <em>외교 상태</em>
+                    {detail.relation.statusLabel}
+                  </span>
+                )}
+                {detail?.blocs.target && (
+                  <span>
+                    <em>세력권</em>
+                    {detail.blocs.target.name} ({detail.blocs.target.acronym})
+                  </span>
+                )}
                 <div className="tno-tag-row">
                   {detail?.relation.tags.length ? (
                     detail.relation.tags.map((tag) => <span key={tag}>{tag}</span>)
@@ -676,6 +752,27 @@ export function TnoDiplomacyPanel({
             <p className="tno-compose-brief">{action.brief}</p>
             <input type="hidden" name="toCountryId" value={selected.id} />
             <input type="hidden" name="type" value={action.type} />
+            <input type="hidden" name="intent" value={action.intent ?? "GENERAL"} />
+            {action.intent === "ALLIANCE_FOUNDATION" && (
+              <div className="tno-compose-alliance">
+                <label>
+                  세력명
+                  <input name="blocName" required minLength={2} maxLength={80} />
+                </label>
+                <label>
+                  약칭
+                  <input name="blocAcronym" required minLength={2} maxLength={12} />
+                </label>
+                <label>
+                  상징색
+                  <input name="blocColor" type="color" defaultValue="#B61F2E" />
+                </label>
+                <label className="wide">
+                  세력 설명
+                  <input name="blocDescription" maxLength={500} />
+                </label>
+              </div>
+            )}
             <label>
               문서 제목
               <input

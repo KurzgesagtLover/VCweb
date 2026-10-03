@@ -35,8 +35,16 @@ const baseline: EconomyInput = {
   policyRate: "0.035",
   currentAccountToGdp: "0.018",
   productivityIndex: "104",
+  povertyRate: "0.1",
+  agriculturalProductivityIndex: "102",
+  foodSelfSufficiency: "0.82",
+  industrialCapitalStockIndex: "105",
+  researchCapacityIndex: "106",
   educationIndex: "0.74",
   researchInvestmentRate: "0.031",
+  publicInvestmentRate: "0.05",
+  educationSpendingRate: "0.04",
+  welfareSpendingRate: "0.05",
   stateCapacity: "68",
   structuralReform: "0.005",
   externalShock: "-0.002",
@@ -190,5 +198,36 @@ describe("deterministic economy calculator", () => {
     };
 
     expect(productivityEffect("0.9").gt(productivityEffect("0.5"))).toBe(true);
+  });
+
+  it("turns fiscal allocations into capital, research, and poverty outcomes", () => {
+    const lowInvestment = calculateEconomy({
+      ...baseline,
+      publicInvestmentRate: "0.01",
+      educationSpendingRate: "0.01",
+      welfareSpendingRate: "0.01",
+    });
+    const highInvestment = calculateEconomy({
+      ...baseline,
+      publicInvestmentRate: "0.09",
+      educationSpendingRate: "0.07",
+      welfareSpendingRate: "0.09",
+    });
+
+    expect(
+      new Decimal(highInvestment.industrialCapitalStockIndex).gt(
+        lowInvestment.industrialCapitalStockIndex,
+      ),
+    ).toBe(true);
+    expect(
+      new Decimal(highInvestment.researchCapacityIndex).gt(lowInvestment.researchCapacityIndex),
+    ).toBe(true);
+    expect(new Decimal(highInvestment.povertyRate).lt(lowInvestment.povertyRate)).toBe(true);
+  });
+
+  it("transmits food supply shocks through self-sufficiency", () => {
+    const neutral = calculateEconomy({ ...baseline, externalShock: "0" });
+    const disruption = calculateEconomy({ ...baseline, externalShock: "-0.15" });
+    expect(new Decimal(disruption.foodSelfSufficiency).lt(neutral.foodSelfSufficiency)).toBe(true);
   });
 });

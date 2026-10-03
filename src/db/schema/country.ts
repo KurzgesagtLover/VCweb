@@ -25,7 +25,9 @@ export const countries = pgTable(
       .references(() => campaigns.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
     code: text("code").notNull(),
+    isoAlpha3: text("iso_alpha3"),
     color: text("color").notNull(),
+    entityType: text("entity_type").notNull().default("STATE"),
     isAi: boolean("is_ai").notNull().default(false),
     economicSystem: text("economic_system").notNull().default("FREE_MARKET"),
     setupStatus: setupStatus("setup_status").notNull().default("DRAFT"),
@@ -35,9 +37,18 @@ export const countries = pgTable(
   },
   (table) => [
     uniqueIndex("countries_campaign_code_uidx").on(table.campaignId, table.code),
+    uniqueIndex("countries_campaign_iso_alpha3_uidx").on(table.campaignId, table.isoAlpha3),
+    check(
+      "countries_iso_alpha3_check",
+      sql`${table.isoAlpha3} IS NULL OR ${table.isoAlpha3} ~ '^[A-Z]{3}$'`,
+    ),
     check(
       "countries_economic_system_check",
       sql`${table.economicSystem} IN ('FREE_MARKET', 'PLANNED')`,
+    ),
+    check(
+      "countries_entity_type_check",
+      sql`${table.entityType} IN ('STATE', 'PARTIALLY_RECOGNIZED_STATE', 'QUASI_STATE', 'ARMED_GROUP', 'GUERRILLA_GROUP')`,
     ),
   ],
 );
@@ -116,10 +127,14 @@ export const administrativeDivisions = pgTable(
     level: integer("level").notNull(),
     typeName: text("type_name").notNull(),
     name: text("name").notNull(),
+    referenceId: text("reference_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("administrative_division_level_check", sql`${table.level} BETWEEN 1 AND 3`)],
+  (table) => [
+    uniqueIndex("administrative_divisions_reference_uidx").on(table.countryId, table.referenceId),
+    check("administrative_division_level_check", sql`${table.level} BETWEEN 1 AND 3`),
+  ],
 );
 
 export const administrativeDivisionRequests = pgTable(

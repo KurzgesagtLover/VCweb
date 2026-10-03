@@ -8,6 +8,7 @@ import {
   type SuperEventView,
 } from "@/src/domain/superevents/template";
 import { OST_DUCK_EVENT, OST_RESTORE_EVENT } from "./background-ost";
+import { attachAudioHiss } from "./audio-hiss";
 
 export type SuperEventStageMode = "live" | "preview" | "embed";
 
@@ -194,10 +195,16 @@ function SuperEventAudio({
     const audio = audioRef.current;
     if (!audio) return;
     const targetVolume = Math.min(1, Math.max(0, volume / 100));
+    // 송출 음원은 배경음보다 히스를 조금 더 얹어 낡은 방송 느낌을 준다.
+    const hiss = attachAudioHiss(audio, { hissLevel: 0.04 });
     let rampFrame: number | null = null;
     let rampStarted = false;
     let introComplete = !reduceIntro;
 
+    const applyVolume = (value: number) => {
+      hiss.setVolume(value);
+      hiss.setHissMuted(value <= 0.001);
+    };
     const seekToStart = () => {
       const latestStart = Number.isFinite(audio.duration)
         ? Math.min(startSeconds, Math.max(0, audio.duration - 0.1))
@@ -214,7 +221,7 @@ function SuperEventAudio({
       const startedAt = performance.now();
       const step = (now: number) => {
         const progress = Math.min(1, (now - startedAt) / 5000);
-        audio.volume = targetVolume * (0.35 + progress * 0.65);
+        applyVolume(targetVolume * (0.35 + progress * 0.65));
         if (progress < 1) rampFrame = requestAnimationFrame(step);
         else {
           rampFrame = null;
@@ -224,6 +231,7 @@ function SuperEventAudio({
       rampFrame = requestAnimationFrame(step);
     };
     const play = () => {
+      void hiss.resume();
       void audio
         .play()
         .then(rampVolume)
@@ -231,14 +239,14 @@ function SuperEventAudio({
     };
     const prepare = () => {
       seekToStart();
-      audio.volume = reduceIntro ? targetVolume * 0.35 : targetVolume;
+      applyVolume(reduceIntro ? targetVolume * 0.35 : targetVolume);
       play();
     };
     const repeatFromStart = () => {
       if (rampFrame !== null) cancelAnimationFrame(rampFrame);
       rampFrame = null;
       introComplete = true;
-      audio.volume = targetVolume;
+      applyVolume(targetVolume);
       seekToStart();
       play();
     };
@@ -256,6 +264,7 @@ function SuperEventAudio({
       window.removeEventListener("pointerdown", play);
       window.removeEventListener("keydown", play);
       audio.pause();
+      hiss.dispose();
     };
   }, [reduceIntro, src, startSeconds, volume]);
 

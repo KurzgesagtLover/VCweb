@@ -126,7 +126,7 @@ export async function saveSubmissionAction(formData: FormData) {
   if (input.budget) {
     const value = new Decimal(input.budget);
     if (!value.isFinite() || value.isNegative())
-      throw new Error("예산은 0 이상의 숫자여야 합니다.");
+      throw new Error("예산은 0 이상의 $1M 단위 숫자여야 합니다.");
     budget = value.toString();
   }
 
@@ -369,7 +369,8 @@ export async function addPolicyPromotionAction(formData: FormData) {
   const session = await requireSession();
   const submissionId = z.string().uuid().parse(formData.get("submissionId"));
   const amount = new Decimal(z.string().trim().min(1).max(50).parse(formData.get("amount")));
-  if (!amount.isFinite() || amount.lte(0)) throw new Error("홍보 예산은 0보다 커야 합니다.");
+  if (!amount.isFinite() || amount.lte(0))
+    throw new Error("홍보 예산은 0보다 큰 $1M 단위 숫자여야 합니다.");
 
   const submission = await db.query.submissions.findFirst({
     where: and(
@@ -473,7 +474,7 @@ export async function addPolicyPromotionAction(formData: FormData) {
         effectivenessMultiplier: effectiveness,
         overpromotionPenalty: promotion.overpromotionPenalty,
       },
-      reason: `연재 홍보 예산 ${amount.toString()} 집행`,
+      reason: `연재 홍보 예산 $${amount.toString()}M 집행`,
     });
   });
   revalidatePath("/submissions");

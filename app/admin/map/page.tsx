@@ -1,10 +1,17 @@
 import Link from "next/link";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { requireRole } from "@/src/auth/session";
 import { db } from "@/src/db";
-import { countries, mapRasterBorderLayers, mapRasters } from "@/src/db/schema";
+import {
+  countries,
+  countryRelations,
+  mapRasterBorderLayers,
+  mapRasterColorAssignments,
+  mapRasters,
+} from "@/src/db/schema";
 import { getCampaignMaps } from "@/src/db/queries/maps";
 import { getViewerContext } from "@/src/db/queries/viewer";
+import type { DiplomaticRelationStatus } from "@/src/domain/diplomacy/status";
 import { parseMapProjection } from "@/src/domain/map/projection";
 import { PageHead } from "@/src/ui/page-head";
 import { PixelMapEditor } from "@/src/ui/pixel-map-editor";
@@ -24,7 +31,7 @@ export default async function AdminMapPage({
   const selectedMap = maps.find((map) => map.id === params.map) ?? maps.at(0);
   if (!selectedMap) return null;
 
-  const [countryRows, raster, borderLayer] = await Promise.all([
+  const [countryRows, raster, borderLayer, colorAssignments, relationRows] = await Promise.all([
     db.query.countries.findMany({ where: eq(countries.campaignId, context.campaign.id) }),
     db.query.mapRasters.findFirst({
       where: eq(mapRasters.mapId, selectedMap.id),
@@ -32,7 +39,18 @@ export default async function AdminMapPage({
     }),
     db.query.mapRasterBorderLayers.findFirst({
       where: eq(mapRasterBorderLayers.mapId, selectedMap.id),
-      columns: { revision: true, classifications: true },
+      columns: { revision: true, classifications: true, layerColors: true },
+    }),
+    db.query.mapRasterColorAssignments.findMany({
+      where: eq(mapRasterColorAssignments.mapId, selectedMap.id),
+      columns: { colorHex: true, countryId: true },
+    }),
+    db.query.countryRelations.findMany({
+      where: and(
+        eq(countryRelations.campaignId, context.campaign.id),
+        ne(countryRelations.status, "NORMAL"),
+      ),
+      columns: { fromCountryId: true, toCountryId: true, status: true },
     }),
   ]);
 
@@ -66,12 +84,25 @@ export default async function AdminMapPage({
         rasterProjection={parseMapProjection(raster?.projection)}
         borderRevision={borderLayer?.revision ?? 0}
         initialBorderClassifications={borderLayer?.classifications ?? []}
-        countries={countryRows.map(({ id, name, code, color, isAi }) => ({
+        initialBorderLayerColors={borderLayer?.layerColors}
+        colorAssignments={colorAssignments}
+        countries={countryRows.map(({ id, name, code, color, entityType, isAi }) => ({
           id,
           name,
           code,
           color,
+          entityType: entityType as
+            | "STATE"
+            | "PARTIALLY_RECOGNIZED_STATE"
+            | "QUASI_STATE"
+            | "ARMED_GROUP"
+            | "GUERRILLA_GROUP",
           isAi,
+        }))}
+        initialRelations={relationRows.map((row) => ({
+          fromCountryId: row.fromCountryId,
+          toCountryId: row.toCountryId,
+          status: row.status as DiplomaticRelationStatus,
         }))}
       />
     </div>

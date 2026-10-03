@@ -10,3 +10,7 @@ backups/
 .env.*.local
 *.log
 tsconfig.tsbuildinfo
+
+# Local package store and scratch reference images
+.pnpm-store/
+.tmp-ref/

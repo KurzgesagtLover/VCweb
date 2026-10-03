@@ -4,6 +4,7 @@ import { useActionState, useMemo, useState } from "react";
 import Decimal from "decimal.js";
 import type { FormState } from "@/src/actions/auth";
 import { submitCountrySetupAction } from "@/src/actions/country";
+import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
 
 export function QuickSetupForm() {
   const [state, action, pending] = useActionState<FormState, FormData>(
@@ -67,7 +68,7 @@ export function QuickSetupForm() {
         />
       </label>
       <label>
-        실질 GDP (백만 기준화폐)
+        실질 GDP (백만 {ECONOMY_STATISTICS_CURRENCY})
         <input
           name="realGdp"
           inputMode="decimal"
@@ -97,7 +98,9 @@ export function QuickSetupForm() {
             </div>
             <div className="data-row">
               <dt>파생 1인당 GDP</dt>
-              <dd>{Number(derived.perCapita).toLocaleString("ko-KR")} 기준화폐</dd>
+              <dd>
+                {Number(derived.perCapita).toLocaleString("ko-KR")} {ECONOMY_STATISTICS_CURRENCY}
+              </dd>
             </div>
           </div>
         </div>

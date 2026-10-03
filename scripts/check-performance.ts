@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db, sqlClient } from "../src/db";
-import { chatMessages, jobs, mapCells } from "../src/db/schema";
+import { chatMessages, jobs } from "../src/db/schema";
 
 async function timedFetch(url: string, init?: RequestInit) {
   const started = performance.now();
@@ -46,22 +46,12 @@ async function checkPerformance() {
     });
     if (!page.ok) throw new Error(`Admin route failed: ${route} (${page.status})`);
   }
-  const tile = await timedFetch(`${baseUrl}/api/map/tiles/3/4/3`, {
-    headers: { Cookie: cookie, Origin: baseUrl },
-  });
-  if (!tile.response.ok || tile.elapsedMs > 5_000 || tile.bytes > 2_000_000) {
-    throw new Error(
-      `Map tile failed limits: ${tile.response.status}, ${tile.elapsedMs.toFixed(0)} ms, ${tile.bytes} bytes`,
-    );
-  }
-
-  const [cellCount, jobCount, messageCount] = await Promise.all([
-    db.select({ count: sql<number>`count(*)::int` }).from(mapCells),
+  const [jobCount, messageCount] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(jobs),
     db.select({ count: sql<number>`count(*)::int` }).from(chatMessages),
   ]);
   console.log(
-    `Admin routing isolated; health ${health.elapsedMs.toFixed(0)} ms; tile ${tile.elapsedMs.toFixed(0)} ms / ${tile.bytes.toLocaleString()} bytes; ${cellCount[0].count.toLocaleString()} cells; ${jobCount[0].count} jobs; ${messageCount[0].count} chat messages.`,
+    `Admin routing isolated; health ${health.elapsedMs.toFixed(0)} ms; ${jobCount[0].count} jobs; ${messageCount[0].count} chat messages.`,
   );
 }
 

@@ -149,7 +149,17 @@ export function SubmissionEditor({
         </label>
         <label>
           연재 예산
-          <input name="budget" inputMode="decimal" defaultValue={initial?.budget ?? ""} />
+          <div className="input-with-unit">
+            <input
+              name="budget"
+              inputMode="decimal"
+              defaultValue={initial?.budget ?? ""}
+              placeholder="예: 25"
+              min={0}
+              step="any"
+            />
+            <small>$1M</small>
+          </div>
         </label>
         <label className="wide">
           세부 실행사항

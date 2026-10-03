@@ -1,0 +1,16 @@
+ETOPO 2022 Global Relief Model (Ice Surface)
+
+Source: NOAA National Centers for Environmental Information (NCEI)
+Dataset: ETOPO 2022, 60 arc-second global surface elevation
+DOI: https://doi.org/10.25921/fd45-gt74
+License: CC0-1.0
+Accessed: 2026-08-26
+
+The browser texture was derived from the NOAA PIFSC ERDDAP grid
+ETOPO_2022_v1_60s using a 5-cell stride, then reduced to 2048x1024.
+R and G contain a packed unsigned 16-bit value spanning -11000m to 9000m.
+B is the land mask (255 above sea level, 0 at or below sea level).
+
+When the globe is zoomed in, the server requests only the visible geographic
+window through NOAA NCEI's NetCDF Subset Service and returns a cached detail
+texture sized for the on-screen globe.

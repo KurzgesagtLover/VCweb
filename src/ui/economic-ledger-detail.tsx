@@ -4,6 +4,9 @@ import { createEconomicChangeSetAction } from "@/src/actions/admin";
 import type { getCountryLedger } from "@/src/db/queries/country";
 import { contributionGroupLabel, metricLabel } from "@/src/domain/display-labels";
 import type { EconomyInput, EconomyRules } from "@/src/domain/economy/calculator";
+import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
+import type { EconomyProjectionContext } from "@/src/domain/economy/simulator";
+import { isPolicyMetric, POLICY_METRICS } from "@/src/domain/policy/metrics";
 import { AdminEconomySimulator } from "./admin-economy-simulator";
 import { EconomicTrendCharts, type EconomicTrendPoint } from "./economic-trend-charts";
 import { formatDecimal, formatMoney, formatPercent } from "./format";
@@ -125,6 +128,11 @@ function buildSimulatorInput(ledger: Ledger): EconomyInput | null {
   const derivedPreviousSpending = spendingDenominator.lte(0)
     ? economy.governmentSpending
     : new Decimal(economy.governmentSpending).div(spendingDenominator).toString();
+  const spendingToGdp = new Decimal(economy.nominalGdp).isZero()
+    ? new Decimal(0)
+    : new Decimal(economy.governmentSpending).div(economy.nominalGdp);
+  const budgetRate = (value: number | undefined, fallback: number) =>
+    spendingToGdp.mul(new Decimal(value ?? fallback).div(100)).toString();
 
   return {
     population: demographic.population,
@@ -155,8 +163,16 @@ function buildSimulatorInput(ledger: Ledger): EconomyInput | null {
     policyRate: economy.policyRate,
     currentAccountToGdp: economy.currentAccountToGdp,
     productivityIndex: economy.productivityIndex,
+    povertyRate: economy.povertyRate,
+    agriculturalProductivityIndex: economy.agriculturalProductivityIndex,
+    foodSelfSufficiency: economy.foodSelfSufficiency,
+    industrialCapitalStockIndex: economy.industrialCapitalStockIndex,
+    researchCapacityIndex: economy.researchCapacityIndex,
     educationIndex: inputValue("educationIndex", "0.7"),
     researchInvestmentRate: inputValue("researchInvestmentRate", "0.025"),
+    publicInvestmentRate: budgetRate(ledger.fiscalPolicy?.budgetIndustry, 22),
+    educationSpendingRate: budgetRate(ledger.fiscalPolicy?.budgetEducation, 17),
+    welfareSpendingRate: budgetRate(ledger.fiscalPolicy?.budgetWelfare, 20),
     stateCapacity: String(ledger.political?.stateCapacity ?? 50),
     structuralReform: inputValue("structuralReform", "0"),
     externalShock: inputValue("externalShock", "0"),
@@ -185,6 +201,52 @@ function buildSimulatorInput(ledger: Ledger): EconomyInput | null {
   };
 }
 
+function buildSimulatorContext(ledger: Ledger): EconomyProjectionContext {
+  const currentTurn = ledger.economicTrend.at(-1);
+  const previousTurn = ledger.economicTrend.at(-2);
+  const currentSequence = currentTurn?.turnSequence ?? 0;
+  const currentDate = currentTurn ? new Date(currentTurn.gameDate) : new Date();
+  const previousDate = previousTurn ? new Date(previousTurn.gameDate) : null;
+  const measuredTurnDays = previousDate
+    ? Math.abs(currentDate.getTime() - previousDate.getTime()) / 86_400_000
+    : 365;
+  const daysPerTurn = measuredTurnDays > 0 ? measuredTurnDays : 365;
+
+  return {
+    modifiers: ledger.economicModifiers.flatMap(({ modifier, startTurnSequence }) => {
+      if (!modifier.durationTurns || modifier.durationTurns < 1) return [];
+      return [
+        {
+          id: modifier.id,
+          metric: modifier.metric,
+          operation: modifier.operation === "MULTIPLY" ? ("MULTIPLY" as const) : ("ADD" as const),
+          value: modifier.value,
+          startTurnOffset: startTurnSequence - currentSequence,
+          durationTurns: modifier.durationTurns,
+        },
+      ];
+    }),
+    goals: ledger.activePolicyGoals.flatMap((goal) => {
+      if (!isPolicyMetric(goal.metric) || POLICY_METRICS[goal.metric].source !== "economic") {
+        return [];
+      }
+      const targetDate = new Date(`${goal.targetGameDate}T00:00:00Z`);
+      const remainingDays = Math.max(0, targetDate.getTime() - currentDate.getTime()) / 86_400_000;
+      return [
+        {
+          id: goal.id,
+          label: goal.name,
+          metric: goal.metric,
+          baselineValue: goal.baselineValue,
+          targetValue: goal.targetValue,
+          latestValue: goal.latestValue,
+          targetTurn: Math.max(1, Math.ceil(remainingDays / daysPerTurn)),
+        },
+      ];
+    }),
+  };
+}
+
 function EconomicEditor({ ledger }: { ledger: Ledger }) {
   const economy = ledger.economic!;
   const groups: Array<[string, Array<keyof typeof economy>]> = [
@@ -196,7 +258,6 @@ function EconomicEditor({ ledger }: { ledger: Ledger }) {
       "통화·신용",
       [
         "foreignReserves",
-        "currencyCode",
         "currencyValue",
         "creditRating",
         "creditRatingAgency",
@@ -206,7 +267,14 @@ function EconomicEditor({ ledger }: { ledger: Ledger }) {
     ],
     [
       "물가·고용·분배",
-      ["incomeGini", "wealthGini", "inflationRate", "landPriceGrowth", "unemploymentRate"],
+      [
+        "incomeGini",
+        "wealthGini",
+        "inflationRate",
+        "landPriceGrowth",
+        "unemploymentRate",
+        "povertyRate",
+      ],
     ],
     [
       "재정·대외·생산성",
@@ -216,19 +284,17 @@ function EconomicEditor({ ledger }: { ledger: Ledger }) {
         "nationalDebt",
         "currentAccountToGdp",
         "productivityIndex",
+        "agriculturalProductivityIndex",
+        "foodSelfSufficiency",
+        "industrialCapitalStockIndex",
+        "researchCapacityIndex",
         "referenceYear",
         "priceBasis",
         "scale",
       ],
     ],
   ];
-  const textFields = new Set([
-    "currencyCode",
-    "creditRating",
-    "creditRatingAgency",
-    "priceBasis",
-    "scale",
-  ]);
+  const textFields = new Set(["creditRating", "creditRatingAgency", "priceBasis", "scale"]);
   return (
     <form action={createEconomicChangeSetAction} className="economy-editor">
       <input type="hidden" name="countryId" value={ledger.country.id} />
@@ -253,7 +319,7 @@ function EconomicEditor({ ledger }: { ledger: Ledger }) {
       ))}
       <div className="derived-strip">
         <span>자동 계산</span>
-        <strong>재정수지 {formatMoney(economy.fiscalBalance, economy.currencyCode)}</strong>
+        <strong>재정수지 {formatMoney(economy.fiscalBalance)}</strong>
         <strong>부채비율 {formatPercent(economy.debtToGdp)}</strong>
         <strong>지출증가율 {formatPercent(economy.governmentSpendingGrowth)}</strong>
       </div>
@@ -278,10 +344,11 @@ export function EconomicLedgerDetail({
   const economy = ledger.economic;
   if (!economy) return <div className="empty-state">경제 스냅샷이 없습니다.</div>;
   const demographic = ledger.demographic;
-  const currency = economy.currencyCode;
+  const currency = ECONOMY_STATISTICS_CURRENCY;
   const contributionGroups = Object.entries(economy.contributions ?? {});
   const trendPoints = buildEconomicTrendPoints(ledger);
   const simulatorInput = buildSimulatorInput(ledger);
+  const simulatorContext = buildSimulatorContext(ledger);
 
   return (
     <section className="panel" id="economic-detail">
@@ -348,7 +415,12 @@ export function EconomicLedgerDetail({
               ["소비자물가 상승률", formatPercent(economy.inflationRate)],
               ["토지가격 상승률", formatPercent(economy.landPriceGrowth)],
               ["실업률", formatPercent(economy.unemploymentRate)],
+              ["빈곤율", formatPercent(economy.povertyRate)],
               ["생산성 지수", formatDecimal(economy.productivityIndex, 2)],
+              ["농업 생산성 지수", formatDecimal(economy.agriculturalProductivityIndex, 2)],
+              ["식량 자급률", formatPercent(economy.foodSelfSufficiency)],
+              ["산업 자본 지수", formatDecimal(economy.industrialCapitalStockIndex, 2)],
+              ["연구 역량 지수", formatDecimal(economy.researchCapacityIndex, 2)],
               ["기준 연도", economy.referenceYear],
               ["가격 기준", economy.priceBasis],
             ]}
@@ -367,7 +439,7 @@ export function EconomicLedgerDetail({
               ["국가 부채", formatMoney(economy.nationalDebt, currency)],
               ["GDP 대비 부채", formatPercent(economy.debtToGdp)],
               ["외환보유고", formatMoney(economy.foreignReserves, currency)],
-              ["통화", currency],
+              ["경제 통계 통화", currency],
               ["통화 가치 지수", formatDecimal(economy.currencyValue, 4)],
               ["기준금리", formatPercent(economy.policyRate)],
               ["GDP 대비 경상수지", formatPercent(economy.currentAccountToGdp)],
@@ -511,6 +583,7 @@ export function EconomicLedgerDetail({
               countryName={ledger.country.name}
               initialInput={simulatorInput}
               rules={economyRules}
+              context={simulatorContext}
             />
           ) : (
             <div className="empty-state">모의실험에 필요한 경제·인구 자료가 없습니다.</div>

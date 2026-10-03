@@ -14,6 +14,11 @@ export const POLICY_METRICS = {
   inflationRate: { label: "물가상승률", unit: "%p", source: "economic" },
   unemploymentRate: { label: "실업률", unit: "%p", source: "economic" },
   productivityIndex: { label: "생산성 지수", unit: "점", source: "economic" },
+  povertyRate: { label: "빈곤율", unit: "%p", source: "economic" },
+  agriculturalProductivityIndex: { label: "농업 생산성 지수", unit: "점", source: "economic" },
+  foodSelfSufficiency: { label: "식량 자급률", unit: "%p", source: "economic" },
+  industrialCapitalStockIndex: { label: "산업 자본 지수", unit: "점", source: "economic" },
+  researchCapacityIndex: { label: "연구 역량 지수", unit: "점", source: "economic" },
   incomeGini: { label: "소득 지니계수", unit: "p", source: "economic" },
   debtToGdp: { label: "GDP 대비 국가부채", unit: "%p", source: "economic" },
   currentAccountToGdp: { label: "GDP 대비 경상수지", unit: "%p", source: "economic" },
@@ -35,6 +40,11 @@ export const CATEGORY_TARGET_METRICS: Record<SerialCategory, PolicyMetric[]> = {
     "inflationRate",
     "unemploymentRate",
     "productivityIndex",
+    "povertyRate",
+    "agriculturalProductivityIndex",
+    "foodSelfSufficiency",
+    "industrialCapitalStockIndex",
+    "researchCapacityIndex",
     "incomeGini",
     "debtToGdp",
     "governmentApproval",
@@ -69,6 +79,12 @@ export const CATEGORY_TARGET_METRICS: Record<SerialCategory, PolicyMetric[]> = {
 
 export function isPolicyMetric(value: string): value is PolicyMetric {
   return value in POLICY_METRICS;
+}
+
+export function policyMetricsForSubmission(category: string, selected: readonly string[]) {
+  const categoryMetrics =
+    category in CATEGORY_TARGET_METRICS ? CATEGORY_TARGET_METRICS[category as SerialCategory] : [];
+  return [...new Set([...selected.filter(isPolicyMetric), ...categoryMetrics])];
 }
 
 export function metricValue(

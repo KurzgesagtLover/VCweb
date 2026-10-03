@@ -31,8 +31,16 @@ export type EconomyInput = {
   policyRate: string;
   currentAccountToGdp: string;
   productivityIndex: string;
+  povertyRate: string;
+  agriculturalProductivityIndex: string;
+  foodSelfSufficiency: string;
+  industrialCapitalStockIndex: string;
+  researchCapacityIndex: string;
   educationIndex: string;
   researchInvestmentRate: string;
+  publicInvestmentRate: string;
+  educationSpendingRate: string;
+  welfareSpendingRate: string;
   stateCapacity: string;
   structuralReform: string;
   externalShock: string;
@@ -72,8 +80,16 @@ export const ECONOMIC_INPUT_PATHS = Object.freeze(
     policyRate: 0,
     currentAccountToGdp: 0,
     productivityIndex: 0,
+    povertyRate: 0,
+    agriculturalProductivityIndex: 0,
+    foodSelfSufficiency: 0,
+    industrialCapitalStockIndex: 0,
+    researchCapacityIndex: 0,
     educationIndex: 0,
     researchInvestmentRate: 0,
+    publicInvestmentRate: 0,
+    educationSpendingRate: 0,
+    welfareSpendingRate: 0,
     stateCapacity: 0,
     structuralReform: 0,
     externalShock: 0,
@@ -101,6 +117,11 @@ export const DEFAULT_ECONOMY_RULES: EconomyRules = {
     longevity: "0.00025",
     ageing: "-0.00018",
     productivity: "0.45",
+    poverty: "-0.035",
+    agriculture: "0.025",
+    foodSecurity: "0.012",
+    industrialCapital: "0.14",
+    researchCapacity: "0.09",
     education: "0.012",
     research: "0.16",
     capacity: "0.01",
@@ -195,6 +216,20 @@ export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RU
     : signedSaturation(ageGap, d(1).div(30));
   const productivityLevelGap = Decimal.max(x.productivityIndex, "0.000001").div(100).ln();
   const productivitySignal = signedSaturation(productivityLevelGap, 8).mul("0.25");
+  const povertySignal = signedSaturation(x.povertyRate.minus("0.12"), 4);
+  const agriculturalProductivitySignal = signedSaturation(
+    Decimal.max(x.agriculturalProductivityIndex, "0.000001").div(100).ln(),
+    6,
+  ).mul("0.2");
+  const foodSecuritySignal = signedSaturation(x.foodSelfSufficiency.minus("0.8"), 2);
+  const industrialCapitalSignal = signedSaturation(
+    Decimal.max(x.industrialCapitalStockIndex, "0.000001").div(100).ln(),
+    6,
+  ).mul("0.25");
+  const researchCapacitySignal = signedSaturation(
+    Decimal.max(x.researchCapacityIndex, "0.000001").div(100).ln(),
+    6,
+  ).mul("0.22");
   const educationSignal = signedSaturation(x.educationIndex.minus("0.5"), "1.5");
   const researchSignal = signedLogDiminishing(x.researchInvestmentRate, 20);
   const capacitySignal = signedSaturation(x.stateCapacity.minus(50).div(50), "0.8");
@@ -228,6 +263,23 @@ export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RU
       "순이동의 체감 인구 효과",
     ),
     c("productivityIndex", productivitySignal.mul(k("productivity")), "생산성의 로그 성장 효과"),
+    c("povertyRate", povertySignal.mul(k("poverty")), "빈곤으로 인한 내수·인적자본 제약"),
+    c(
+      "agriculturalProductivityIndex",
+      agriculturalProductivitySignal.mul(k("agriculture")),
+      "농업 생산성의 공급 기여",
+    ),
+    c("foodSelfSufficiency", foodSecuritySignal.mul(k("foodSecurity")), "식량 공급 안정성"),
+    c(
+      "industrialCapitalStockIndex",
+      industrialCapitalSignal.mul(k("industrialCapital")),
+      "산업 자본 축적",
+    ),
+    c(
+      "researchCapacityIndex",
+      researchCapacitySignal.mul(k("researchCapacity")),
+      "연구 역량의 생산성 전환",
+    ),
     c("educationIndex", educationSignal.mul(k("education")), "교육 기반 인적자본"),
     c("researchInvestmentRate", researchSignal.mul(k("research")), "연구 투자의 체감 수익"),
     c("stateCapacity", capacitySignal.mul(k("capacity")), "국가 역량의 포화 효과"),
@@ -464,6 +516,79 @@ export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RU
     "-0.02",
     "0.35",
   );
+  const nextProductivity = Decimal.max(
+    "0.000001",
+    x.productivityIndex.mul(
+      d(1)
+        .plus(x.researchInvestmentRate.mul("0.06"))
+        .plus(x.structuralReform.mul("0.1"))
+        .plus(researchCapacitySignal.mul("0.012"))
+        .plus(industrialCapitalSignal.mul("0.006")),
+    ),
+  );
+  const industrialCapitalGrowth = clamp(
+    x.publicInvestmentRate
+      .mul("0.18")
+      .plus(growth.mul("0.04"))
+      .minus(Decimal.max(0, realRateGap).mul("0.025"))
+      .plus(x.structuralReform.mul("0.08"))
+      .minus("0.008"),
+    "-0.06",
+    "0.08",
+  );
+  const nextIndustrialCapitalStock = Decimal.max(
+    "0.000001",
+    x.industrialCapitalStockIndex.mul(d(1).plus(industrialCapitalGrowth)),
+  );
+  const researchCapacityGrowth = clamp(
+    x.researchInvestmentRate
+      .mul("0.12")
+      .plus(x.educationSpendingRate.mul("0.1"))
+      .plus(x.structuralReform.mul("0.03"))
+      .minus("0.006"),
+    "-0.04",
+    "0.06",
+  );
+  const nextResearchCapacity = Decimal.max(
+    "0.000001",
+    x.researchCapacityIndex.mul(d(1).plus(researchCapacityGrowth)),
+  );
+  const productivityGrowth = nextProductivity
+    .div(Decimal.max(x.productivityIndex, "0.000001"))
+    .minus(1);
+  const agriculturalProductivityGrowth = clamp(
+    x.researchInvestmentRate
+      .mul("0.035")
+      .plus(productivityGrowth.mul("0.18"))
+      .plus(x.publicInvestmentRate.mul("0.025"))
+      .plus(Decimal.min(0, x.externalShock).mul("0.12"))
+      .minus("0.0015"),
+    "-0.08",
+    "0.08",
+  );
+  const nextAgriculturalProductivity = Decimal.max(
+    "0.000001",
+    x.agriculturalProductivityIndex.mul(d(1).plus(agriculturalProductivityGrowth)),
+  );
+  const nextFoodSelfSufficiency = clamp(
+    x.foodSelfSufficiency
+      .plus(agriculturalProductivityGrowth.mul("0.55"))
+      .minus(populationGrowth.mul("0.25"))
+      .plus(x.externalShock.mul("0.08")),
+    "0",
+    "2",
+  );
+  const povertyTarget = clamp(
+    d("0.035")
+      .plus(Decimal.max(0, nextIncomeGini.minus("0.25")).mul("0.62"))
+      .plus(Decimal.max(0, nextUnemployment.minus("0.035")).mul("0.92"))
+      .plus(Decimal.max(0, nextInflation.minus("0.03")).mul("0.32"))
+      .minus(Decimal.max(0, growth).mul("0.18"))
+      .minus(x.welfareSpendingRate.mul("0.35")),
+    "0.01",
+    "0.8",
+  );
+  const nextPovertyRate = clamp(x.povertyRate.mul("0.55").plus(povertyTarget.mul("0.45")), 0, 1);
 
   return {
     rulesVersion: `${rules.version}:nonlinear-v3.1-stable`,
@@ -494,16 +619,19 @@ export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RU
       .toString(),
     policyRate: nextPolicyRate.toSignificantDigits(12).toString(),
     currentAccountToGdp: nextCurrentAccount.toSignificantDigits(12).toString(),
-    productivityIndex: x.productivityIndex
-      .mul(d(1).plus(x.researchInvestmentRate.mul("0.06")).plus(x.structuralReform.mul("0.1")))
-      .toSignificantDigits(12)
-      .toString(),
+    productivityIndex: nextProductivity.toSignificantDigits(12).toString(),
+    povertyRate: nextPovertyRate.toSignificantDigits(12).toString(),
+    agriculturalProductivityIndex: nextAgriculturalProductivity.toSignificantDigits(12).toString(),
+    foodSelfSufficiency: nextFoodSelfSufficiency.toSignificantDigits(12).toString(),
+    industrialCapitalStockIndex: nextIndustrialCapitalStock.toSignificantDigits(12).toString(),
+    researchCapacityIndex: nextResearchCapacity.toSignificantDigits(12).toString(),
     contributions: {
       growth: [...potentialContributions, ...cycleContributions],
       inflation: inflationContributions,
       distribution: [
         c("incomeGini", x.incomeGini, "전기 소득 분배"),
         c("wealthGini", x.wealthGini, "전기 자산 분배"),
+        c("povertyRate", nextPovertyRate, "고용·물가·분배·복지지출을 반영한 빈곤율"),
       ],
       external: [
         c("realGni", overseasIncomeRatio, "해외 요소소득"),

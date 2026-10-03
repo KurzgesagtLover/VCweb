@@ -10,6 +10,7 @@ import {
   campaigns,
   countries,
   demographicSnapshots,
+  economicSectors,
   economicSnapshots,
   effectProposals,
   eventChoices,
@@ -35,6 +36,9 @@ import {
   nextTurnDeadline,
 } from "@/src/domain/turn/schedule";
 import { validateEffect } from "@/src/domain/effects/registry";
+import { COUNTRY_TRACKS, isDevelopmentMetricKey } from "@/src/domain/development/tracks";
+import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
+import { standardEconomicSectorRows } from "@/src/domain/economy/sectors";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import {
   drainJobs,
@@ -42,6 +46,8 @@ import {
   enqueueJob,
   turnJobsAreSettled,
 } from "@/src/services/job-runner";
+import { applyCountryDevelopmentDeltas } from "@/src/services/development-tracks";
+import { getPoliticalPowerState } from "@/src/services/political-power";
 
 function requireConfirmation(formData: FormData) {
   if (formData.get("confirm") !== "yes")
@@ -57,6 +63,11 @@ const economicEffectBounds: Record<string, [string, string]> = {
   inflationRate: ["-0.10", "1"],
   unemploymentRate: ["0", "1"],
   productivityIndex: ["0", "1000000"],
+  povertyRate: ["0", "1"],
+  agriculturalProductivityIndex: ["0.000001", "1000000"],
+  foodSelfSufficiency: ["0", "2"],
+  industrialCapitalStockIndex: ["0.000001", "1000000"],
+  researchCapacityIndex: ["0.000001", "1000000"],
   incomeGini: ["0", "1"],
   wealthGini: ["0", "1"],
   debtToGdp: ["0", "10"],
@@ -387,6 +398,7 @@ export async function publishTurnCore(
         .select({
           id: turnCountryWorkspaces.id,
           countryId: turnCountryWorkspaces.countryId,
+          beforeEconomic: turnCountryWorkspaces.beforeEconomic,
           afterEconomic: turnCountryWorkspaces.afterEconomic,
           afterDemographic: turnCountryWorkspaces.afterDemographic,
           afterPolitical: turnCountryWorkspaces.afterPolitical,
@@ -520,6 +532,51 @@ export async function publishTurnCore(
     }
   }
 
+  const continuingDevelopmentModifiers = (
+    await db
+      .select({ modifier: modifiers, startSequence: turns.sequence })
+      .from(modifiers)
+      .innerJoin(turns, eq(modifiers.startTurnId, turns.id))
+      .where(
+        and(
+          eq(turns.campaignId, campaign.id),
+          inArray(
+            modifiers.metric,
+            COUNTRY_TRACKS.map((metric) => metric.key),
+          ),
+        ),
+      )
+  ).filter(({ modifier, startSequence }) => {
+    const elapsed = turn.sequence - startSequence;
+    return elapsed >= 1 && modifier.durationTurns !== null && elapsed < modifier.durationTurns;
+  });
+  const developmentDeltas = [
+    ...snapshotEffects.flatMap((effect) =>
+      effect.targetType === "COUNTRY" && isDevelopmentMetricKey(effect.metric)
+        ? [{ countryId: effect.targetId, metric: effect.metric, delta: effect.value }]
+        : [],
+    ),
+    ...continuingDevelopmentModifiers.flatMap(({ modifier }) =>
+      isDevelopmentMetricKey(modifier.metric)
+        ? [
+            {
+              countryId: modifier.countryId,
+              metric: modifier.metric,
+              delta: modifier.value,
+            },
+          ]
+        : [],
+    ),
+  ];
+  const politicalPowerByCountry = new Map(
+    await Promise.all(
+      workspaceRows.map(async (workspace) => {
+        const resource = await getPoliticalPowerState(workspace.countryId, campaign);
+        return [workspace.countryId, resource.balance] as const;
+      }),
+    ),
+  );
+
   await db.transaction(async (tx) => {
     const key = turnStepKey(campaign.id, turn.id, "PUBLISH");
     await tx
@@ -538,10 +595,12 @@ export async function publishTurnCore(
       .update(turnCountryWorkspaces)
       .set({ publishedAt: new Date(), updatedAt: new Date() })
       .where(eq(turnCountryWorkspaces.turnId, turn.id));
+    await applyCountryDevelopmentDeltas(tx, developmentDeltas);
     for (const workspace of workspaceRows) {
       const economic = { ...workspace.afterEconomic } as Record<string, unknown>;
       const demographic = { ...workspace.afterDemographic } as Record<string, unknown>;
       const political = { ...workspace.afterPolitical } as Record<string, unknown>;
+      political.politicalPower = politicalPowerByCountry.get(workspace.countryId) ?? "100";
       for (const effect of snapshotEffects) {
         if (effect.targetType === "COUNTRY" && effect.targetId === workspace.countryId) {
           applyEffectToSnapshot(economic, political, effect);
@@ -568,9 +627,43 @@ export async function publishTurnCore(
           ...(economic as typeof economicSnapshots.$inferInsert),
           countryId: workspace.countryId,
           turnId: turn.id,
+          currencyCode: ECONOMY_STATISTICS_CURRENCY,
         })
         .onConflictDoNothing({
           target: [economicSnapshots.countryId, economicSnapshots.turnId],
+        });
+      const sourceSectorTurnId = String(
+        (workspace.beforeEconomic as Record<string, unknown>).turnId ?? "",
+      );
+      const sourceSectors = sourceSectorTurnId
+        ? await tx.query.economicSectors.findMany({
+            where: and(
+              eq(economicSectors.countryId, workspace.countryId),
+              eq(economicSectors.turnId, sourceSectorTurnId),
+            ),
+          })
+        : [];
+      const nextSectors = sourceSectors.length
+        ? sourceSectors.map((sector) => ({
+            code: sector.code,
+            name: sector.name,
+            share: sector.share,
+            productionIndex: sector.productionIndex,
+            productivity: sector.productivity,
+            growthRate: sector.growthRate,
+          }))
+        : standardEconomicSectorRows();
+      await tx
+        .insert(economicSectors)
+        .values(
+          nextSectors.map((sector) => ({
+            countryId: workspace.countryId,
+            turnId: turn.id,
+            ...sector,
+          })),
+        )
+        .onConflictDoNothing({
+          target: [economicSectors.countryId, economicSectors.turnId, economicSectors.code],
         });
       await tx
         .insert(politicalSnapshots)

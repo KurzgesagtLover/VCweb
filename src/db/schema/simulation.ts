@@ -54,6 +54,38 @@ export const demographicSnapshots = pgTable(
   ],
 );
 
+export const countryDevelopmentTracks = pgTable(
+  "country_development_tracks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    countryId: uuid("country_id")
+      .notNull()
+      .references(() => countries.id, { onDelete: "restrict" }),
+    metric: text("metric").notNull(),
+    stage: integer("stage").notNull().default(3),
+    progress: numeric("progress", { precision: 9, scale: 4 }).notNull().default("0"),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex("country_development_tracks_country_metric_uidx").on(table.countryId, table.metric),
+    check(
+      "country_development_tracks_metric_check",
+      sql`${table.metric} IN ('literacy', 'poverty', 'agriculturalSelfSufficiency', 'factoryEquipment', 'industrialExpertise', 'researchFacilities', 'academicFoundation', 'pressFreedom', 'religiousFreedom', 'laborUnions', 'assemblyFreedom', 'suffrage', 'partySystem', 'judicialIndependence')`,
+    ),
+    check(
+      "country_development_tracks_stage_check",
+      sql`(
+        ${table.metric} = 'laborUnions' AND ${table.stage} BETWEEN 1 AND 7
+      ) OR (
+        ${table.metric} IN ('religiousFreedom', 'judicialIndependence') AND ${table.stage} BETWEEN 1 AND 4
+      ) OR (
+        ${table.metric} NOT IN ('laborUnions', 'religiousFreedom', 'judicialIndependence') AND ${table.stage} BETWEEN 1 AND 5
+      )`,
+    ),
+    check("country_development_tracks_progress_check", sql`${table.progress} BETWEEN -150 AND 150`),
+  ],
+);
+
 export const economicSnapshots = pgTable(
   "economic_snapshots",
   {
@@ -72,7 +104,7 @@ export const economicSnapshots = pgTable(
     realGnp: numeric("real_gnp", { precision: 30, scale: 4 }).notNull(),
     wealth: numeric("wealth", { precision: 30, scale: 4 }).notNull(),
     foreignReserves: numeric("foreign_reserves", { precision: 30, scale: 4 }).notNull(),
-    currencyCode: text("currency_code").notNull(),
+    currencyCode: text("currency_code").notNull().default("USD"),
     currencyValue: numeric("currency_value", { precision: 20, scale: 8 }).notNull(),
     creditRating: text("credit_rating").notNull(),
     creditRatingAgency: text("credit_rating_agency").notNull().default("국가신용평가원"),
@@ -94,6 +126,25 @@ export const economicSnapshots = pgTable(
     policyRate: numeric("policy_rate", { precision: 10, scale: 7 }).notNull(),
     currentAccountToGdp: numeric("current_account_to_gdp", { precision: 10, scale: 7 }).notNull(),
     productivityIndex: numeric("productivity_index", { precision: 14, scale: 6 }).notNull(),
+    povertyRate: numeric("poverty_rate", { precision: 8, scale: 6 }).notNull().default("0.12"),
+    agriculturalProductivityIndex: numeric("agricultural_productivity_index", {
+      precision: 14,
+      scale: 6,
+    })
+      .notNull()
+      .default("100"),
+    foodSelfSufficiency: numeric("food_self_sufficiency", { precision: 8, scale: 6 })
+      .notNull()
+      .default("0.8"),
+    industrialCapitalStockIndex: numeric("industrial_capital_stock_index", {
+      precision: 14,
+      scale: 6,
+    })
+      .notNull()
+      .default("100"),
+    researchCapacityIndex: numeric("research_capacity_index", { precision: 14, scale: 6 })
+      .notNull()
+      .default("100"),
     referenceYear: integer("reference_year").notNull(),
     priceBasis: text("price_basis").notNull(),
     scale: text("scale").notNull().default("million"),
@@ -110,11 +161,23 @@ export const economicSnapshots = pgTable(
     check("economic_nominal_gdp_check", sql`${table.nominalGdp} >= 0`),
     check("economic_wealth_check", sql`${table.wealth} >= 0`),
     check("economic_reserves_check", sql`${table.foreignReserves} >= 0`),
+    check("economic_currency_code_usd_check", sql`${table.currencyCode} = 'USD'`),
     check("economic_currency_value_check", sql`${table.currencyValue} > 0`),
     check("economic_credit_score_check", sql`${table.creditScore} BETWEEN 0 AND 100`),
     check("economic_income_gini_check", sql`${table.incomeGini} BETWEEN 0 AND 1`),
     check("economic_wealth_gini_check", sql`${table.wealthGini} BETWEEN 0 AND 1`),
     check("economic_unemployment_check", sql`${table.unemploymentRate} BETWEEN 0 AND 1`),
+    check("economic_poverty_check", sql`${table.povertyRate} BETWEEN 0 AND 1`),
+    check(
+      "economic_agricultural_productivity_check",
+      sql`${table.agriculturalProductivityIndex} > 0`,
+    ),
+    check(
+      "economic_food_self_sufficiency_check",
+      sql`${table.foodSelfSufficiency} BETWEEN 0 AND 2`,
+    ),
+    check("economic_industrial_capital_stock_check", sql`${table.industrialCapitalStockIndex} > 0`),
+    check("economic_research_capacity_check", sql`${table.researchCapacityIndex} > 0`),
     check("economic_debt_check", sql`${table.nationalDebt} >= 0`),
   ],
 );
@@ -144,14 +207,46 @@ export const countryFiscalPolicies = pgTable(
       .notNull()
       .unique()
       .references(() => countries.id, { onDelete: "restrict" }),
-    taxRate: numeric("tax_rate", { precision: 8, scale: 6 }).notNull(),
+    incomeTaxRate: numeric("income_tax_rate", { precision: 8, scale: 6 }).notNull(),
+    corporateTaxRate: numeric("corporate_tax_rate", { precision: 8, scale: 6 }).notNull(),
+    otherTaxRate: numeric("other_tax_rate", { precision: 8, scale: 6 }).notNull(),
+    budgetPreset: text("budget_preset").notNull().default("BALANCED"),
+    budgetDefense: integer("budget_defense").notNull().default(18),
+    budgetAdministration: integer("budget_administration").notNull().default(15),
+    budgetIndustry: integer("budget_industry").notNull().default(22),
+    budgetEducation: integer("budget_education").notNull().default(17),
+    budgetWelfare: integer("budget_welfare").notNull().default(20),
+    budgetDiplomacy: integer("budget_diplomacy").notNull().default(8),
     updatedBy: text("updated_by")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
     ...auditColumns,
   },
   (table) => [
-    check("country_fiscal_policy_tax_rate_check", sql`${table.taxRate} BETWEEN 0 AND 0.75`),
+    check(
+      "country_fiscal_policy_income_tax_rate_check",
+      sql`${table.incomeTaxRate} BETWEEN 0 AND 0.75`,
+    ),
+    check(
+      "country_fiscal_policy_corporate_tax_rate_check",
+      sql`${table.corporateTaxRate} BETWEEN 0 AND 0.75`,
+    ),
+    check(
+      "country_fiscal_policy_other_tax_rate_check",
+      sql`${table.otherTaxRate} BETWEEN 0 AND 0.75`,
+    ),
+    check(
+      "country_fiscal_policy_budget_preset_check",
+      sql`${table.budgetPreset} IN ('BALANCED', 'GROWTH_FIRST', 'WELFARE_STATE', 'STATE_DEVELOPMENT', 'NATIONAL_SECURITY', 'CIVIC_INVESTMENT')`,
+    ),
+    check(
+      "country_fiscal_policy_budget_values_check",
+      sql`${table.budgetDefense} BETWEEN 0 AND 100 AND ${table.budgetAdministration} BETWEEN 0 AND 100 AND ${table.budgetIndustry} BETWEEN 0 AND 100 AND ${table.budgetEducation} BETWEEN 0 AND 100 AND ${table.budgetWelfare} BETWEEN 0 AND 100 AND ${table.budgetDiplomacy} BETWEEN 0 AND 100`,
+    ),
+    check(
+      "country_fiscal_policy_budget_total_check",
+      sql`${table.budgetDefense} + ${table.budgetAdministration} + ${table.budgetIndustry} + ${table.budgetEducation} + ${table.budgetWelfare} + ${table.budgetDiplomacy} = 100`,
+    ),
   ],
 );
 
@@ -191,20 +286,193 @@ export const financialInstitutions = pgTable("financial_institutions", {
   ...auditColumns,
 });
 
-export const majorCompanies = pgTable("major_companies", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  countryId: uuid("country_id")
-    .notNull()
-    .references(() => countries.id, { onDelete: "restrict" }),
-  name: text("name").notNull(),
-  industry: text("industry").notNull(),
-  sizeIndex: integer("size_index").notNull(),
-  stateOwned: boolean("state_owned").notNull().default(false),
-  systemicImportance: integer("systemic_importance").notNull(),
-  health: integer("health").notNull().default(60),
-  industryTags: text("industry_tags").array().notNull().default([]),
-  ...auditColumns,
-});
+export const majorCompanies = pgTable(
+  "major_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    countryId: uuid("country_id")
+      .notNull()
+      .references(() => countries.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    logo: text("logo").notNull().default(""),
+    slogan: text("slogan").notNull().default(""),
+    abbreviation: text("abbreviation"),
+    founded: text("founded").notNull().default(""),
+    history: text("history").notNull().default(""),
+    legalForm: text("legal_form").notNull().default(""),
+    headquarters: text("headquarters").notNull().default(""),
+    placeOfFoundation: text("place_of_foundation"),
+    chiefExecutiveOfficer: text("chief_executive_officer").notNull().default(""),
+    boardChair: text("board_chair"),
+    parentCompany: text("parent_company").notNull().default("없음"),
+    largestShareholder: text("largest_shareholder"),
+    majorShareholders: text("major_shareholders").array().notNull().default([]),
+    subsidiaries: text("subsidiaries").array().notNull().default([]),
+    affiliates: text("affiliates").array().notNull().default([]),
+    employeeCount: numeric("employee_count", { precision: 24, scale: 0 }).notNull().default("0"),
+    indirectEmployment: numeric("indirect_employment", { precision: 24, scale: 0 }),
+    overseasEmployees: numeric("overseas_employees", { precision: 24, scale: 0 }),
+    averageSalary: numeric("average_salary", { precision: 30, scale: 4 }),
+    unionMembershipRate: numeric("union_membership_rate", { precision: 8, scale: 6 }),
+    revenue: numeric("revenue", { precision: 30, scale: 4 }).notNull().default("0"),
+    grossProfit: numeric("gross_profit", { precision: 30, scale: 4 }).notNull().default("0"),
+    operatingProfit: numeric("operating_profit", { precision: 30, scale: 4 })
+      .notNull()
+      .default("0"),
+    netIncome: numeric("net_income", { precision: 30, scale: 4 }).notNull().default("0"),
+    totalAssets: numeric("total_assets", { precision: 30, scale: 4 }).notNull().default("0"),
+    totalDebt: numeric("total_debt", { precision: 30, scale: 4 }),
+    enterpriseValue: numeric("enterprise_value", { precision: 30, scale: 4 })
+      .notNull()
+      .default("0"),
+    marketCapitalization: numeric("market_capitalization", { precision: 30, scale: 4 }),
+    creditRating: text("credit_rating"),
+    researchAndDevelopmentExpense: numeric("research_and_development_expense", {
+      precision: 30,
+      scale: 4,
+    }),
+    capitalExpenditure: numeric("capital_expenditure", { precision: 30, scale: 4 }),
+    cashAndEquivalents: numeric("cash_and_equivalents", { precision: 30, scale: 4 }),
+    dividendsPaid: numeric("dividends_paid", { precision: 30, scale: 4 }),
+    debtRatio: numeric("debt_ratio", { precision: 10, scale: 7 }),
+    operatingMargin: numeric("operating_margin", { precision: 10, scale: 7 }),
+    automationProductivityGrowthRate: numeric("automation_productivity_growth_rate", {
+      precision: 10,
+      scale: 7,
+    })
+      .notNull()
+      .default("0"),
+    industry: text("industry").notNull(),
+    productsAndServices: text("products_and_services").array().notNull().default([]),
+    brands: text("brands").array().notNull().default([]),
+    productionFacilities: text("production_facilities").array().notNull().default([]),
+    researchFacilities: text("research_facilities").array().notNull().default([]),
+    overseasBases: text("overseas_bases").array().notNull().default([]),
+    majorMarkets: text("major_markets").array().notNull().default([]),
+    competitors: text("competitors").array().notNull().default([]),
+    isListed: boolean("is_listed").notNull().default(false),
+    stockExchange: text("stock_exchange"),
+    tickerSymbol: text("ticker_symbol"),
+    sharesOutstanding: numeric("shares_outstanding", { precision: 30, scale: 0 }),
+    sharePrice: numeric("share_price", { precision: 30, scale: 4 }),
+    dividendYield: numeric("dividend_yield", { precision: 10, scale: 7 }),
+    sizeIndex: integer("size_index").notNull(),
+    stateOwned: boolean("state_owned").notNull().default(false),
+    systemicImportance: integer("systemic_importance").notNull(),
+    health: integer("health").notNull().default(60),
+    industryTags: text("industry_tags").array().notNull().default([]),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex("major_companies_country_name_uidx").on(table.countryId, table.name),
+    check("major_companies_employee_count_check", sql`${table.employeeCount} >= 0`),
+    check(
+      "major_companies_union_membership_rate_check",
+      sql`${table.unionMembershipRate} IS NULL OR ${table.unionMembershipRate} BETWEEN 0 AND 1`,
+    ),
+    check(
+      "major_companies_financial_ratio_check",
+      sql`(${table.debtRatio} IS NULL OR ${table.debtRatio} >= 0) AND (${table.dividendYield} IS NULL OR ${table.dividendYield} >= 0)`,
+    ),
+    check(
+      "major_companies_simulation_indices_check",
+      sql`${table.sizeIndex} BETWEEN 0 AND 100 AND ${table.systemicImportance} BETWEEN 0 AND 100 AND ${table.health} BETWEEN 0 AND 100`,
+    ),
+    check(
+      "major_companies_automation_growth_check",
+      sql`${table.automationProductivityGrowthRate} BETWEEN -1 AND 1`,
+    ),
+  ],
+);
+
+export const companyScaleStatistics = pgTable(
+  "company_scale_statistics",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    countryId: uuid("country_id")
+      .notNull()
+      .unique()
+      .references(() => countries.id, { onDelete: "restrict" }),
+    largeEnterpriseCount: numeric("large_enterprise_count", { precision: 24, scale: 0 })
+      .notNull()
+      .default("0"),
+    mediumEnterpriseCount: numeric("medium_enterprise_count", { precision: 24, scale: 0 })
+      .notNull()
+      .default("0"),
+    smallEnterpriseCount: numeric("small_enterprise_count", { precision: 24, scale: 0 })
+      .notNull()
+      .default("0"),
+    ...auditColumns,
+  },
+  (table) => [
+    check(
+      "company_scale_statistics_counts_check",
+      sql`${table.largeEnterpriseCount} >= 0 AND ${table.mediumEnterpriseCount} >= 0 AND ${table.smallEnterpriseCount} >= 0`,
+    ),
+  ],
+);
+
+export const companyClassFinancials = pgTable(
+  "company_class_financials",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    countryId: uuid("country_id")
+      .notNull()
+      .references(() => countries.id, { onDelete: "restrict" }),
+    companyClass: text("company_class").notNull(),
+    totalRevenue: numeric("total_revenue", { precision: 30, scale: 4 }).notNull().default("0"),
+    totalGrossProfit: numeric("total_gross_profit", { precision: 30, scale: 4 })
+      .notNull()
+      .default("0"),
+    totalOperatingProfit: numeric("total_operating_profit", { precision: 30, scale: 4 })
+      .notNull()
+      .default("0"),
+    totalNetIncome: numeric("total_net_income", { precision: 30, scale: 4 }).notNull().default("0"),
+    totalAssets: numeric("total_assets", { precision: 30, scale: 4 }).notNull().default("0"),
+    totalDebt: numeric("total_debt", { precision: 30, scale: 4 }).notNull().default("0"),
+    totalEnterpriseValue: numeric("total_enterprise_value", { precision: 30, scale: 4 })
+      .notNull()
+      .default("0"),
+    totalEmployees: numeric("total_employees", { precision: 24, scale: 0 }).notNull().default("0"),
+    totalResearchAndDevelopmentExpense: numeric("total_research_and_development_expense", {
+      precision: 30,
+      scale: 4,
+    })
+      .notNull()
+      .default("0"),
+    totalCapitalExpenditure: numeric("total_capital_expenditure", {
+      precision: 30,
+      scale: 4,
+    })
+      .notNull()
+      .default("0"),
+    automationProductivityGrowthRate: numeric("automation_productivity_growth_rate", {
+      precision: 10,
+      scale: 7,
+    })
+      .notNull()
+      .default("0"),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex("company_class_financials_country_class_uidx").on(
+      table.countryId,
+      table.companyClass,
+    ),
+    check(
+      "company_class_financials_class_check",
+      sql`${table.companyClass} IN ('LARGE', 'MEDIUM', 'SMALL')`,
+    ),
+    check(
+      "company_class_financials_nonnegative_totals_check",
+      sql`${table.totalRevenue} >= 0 AND ${table.totalAssets} >= 0 AND ${table.totalDebt} >= 0 AND ${table.totalEnterpriseValue} >= 0 AND ${table.totalEmployees} >= 0 AND ${table.totalResearchAndDevelopmentExpense} >= 0 AND ${table.totalCapitalExpenditure} >= 0`,
+    ),
+    check(
+      "company_class_financials_automation_growth_check",
+      sql`${table.automationProductivityGrowthRate} BETWEEN -1 AND 1`,
+    ),
+  ],
+);
 
 export const politicalSnapshots = pgTable(
   "political_snapshots",
@@ -231,6 +499,9 @@ export const politicalSnapshots = pgTable(
     stateCapacity: integer("state_capacity").notNull(),
     corruption: integer("corruption").notNull(),
     democracy: integer("democracy").notNull(),
+    politicalPower: numeric("political_power", { precision: 12, scale: 4 })
+      .notNull()
+      .default("100"),
     ...auditColumns,
   },
   (table) => [
@@ -239,6 +510,28 @@ export const politicalSnapshots = pgTable(
       "political_metrics_check",
       sql`${table.stability} BETWEEN 0 AND 100 AND ${table.legitimacy} BETWEEN 0 AND 100 AND ${table.governmentApproval} BETWEEN 0 AND 100 AND ${table.policySupport} BETWEEN 0 AND 100 AND ${table.unrest} BETWEEN 0 AND 100 AND ${table.stateCapacity} BETWEEN 0 AND 100 AND ${table.corruption} BETWEEN 0 AND 100 AND ${table.democracy} BETWEEN 0 AND 100`,
     ),
+    check("political_power_check", sql`${table.politicalPower} BETWEEN 0 AND 1000`),
+  ],
+);
+
+export const countryPoliticalResources = pgTable(
+  "country_political_resources",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    countryId: uuid("country_id")
+      .notNull()
+      .unique()
+      .references(() => countries.id, { onDelete: "restrict" }),
+    balance: numeric("balance", { precision: 12, scale: 4 }).notNull().default("100"),
+    incomePerGameDay: numeric("income_per_game_day", { precision: 12, scale: 6 })
+      .notNull()
+      .default("0.1"),
+    lastAccruedAt: timestamp("last_accrued_at", { withTimezone: true }).notNull().defaultNow(),
+    ...auditColumns,
+  },
+  (table) => [
+    check("political_resource_balance_check", sql`${table.balance} BETWEEN 0 AND 1000`),
+    check("political_resource_income_check", sql`${table.incomePerGameDay} BETWEEN -10 AND 10`),
   ],
 );
 

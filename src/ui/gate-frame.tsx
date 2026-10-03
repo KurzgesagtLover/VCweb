@@ -1,6 +1,8 @@
 import Image from "next/image";
 import type { ReactNode } from "react";
 
+export { Key, GateTypewriter } from "./gate-typewriter";
+
 const SCENES = [
   {
     src: "/gate/bureau.webp",
@@ -104,15 +106,4 @@ export function GateFrame({
       </div>
     </main>
   );
-}
-
-/** 대사 안에서 특정 낱말을 강조한다. 붉은색은 위기, 노란색은 의지, 보라색은 체제를 가리킨다. */
-export function Key({
-  tone = "warning",
-  children,
-}: {
-  tone?: "danger" | "warning" | "system";
-  children: ReactNode;
-}) {
-  return <b className={`gate-key is-${tone}`}>{children}</b>;
 }

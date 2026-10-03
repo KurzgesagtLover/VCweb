@@ -4,6 +4,7 @@ import { getCountryLedger } from "@/src/db/queries/country";
 import { getGovernmentStructure } from "@/src/db/queries/government";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { governmentBranchLabel, metricLabel } from "@/src/domain/display-labels";
+import { getPoliticalPowerState } from "@/src/services/political-power";
 import { formatMoney, formatPercent } from "@/src/ui/format";
 import {
   GovernmentPersonnelCarousel,
@@ -19,6 +20,7 @@ import {
   TnoTrend,
   TnoWindow,
 } from "@/src/ui/tno-frame";
+import { PoliticalPowerTicker } from "@/src/ui/political-power-ticker";
 
 export const metadata = { title: "정치" };
 
@@ -249,7 +251,13 @@ function ReplacementView({ structure, updated }: { structure: Structure; updated
   );
 }
 
-function OverviewView({ ledger }: { ledger: Ledger }) {
+function OverviewView({
+  ledger,
+  politicalPower,
+}: {
+  ledger: Ledger;
+  politicalPower: Awaited<ReturnType<typeof getPoliticalPowerState>>;
+}) {
   const p = ledger.political;
   const politicalChanges = ledger.approvedChanges.filter((change) => change.domain === "POLITICS");
 
@@ -275,10 +283,10 @@ function OverviewView({ ledger }: { ledger: Ledger }) {
           tone={p && p.legitimacy < 40 ? "bad" : undefined}
         />
         <TnoHeadline
-          label="사회 불안"
-          value={p?.unrest ?? "—"}
-          meta="낮을수록 안정"
-          tone={p && p.unrest > 55 ? "bad" : "good"}
+          label="정치력"
+          value={<PoliticalPowerTicker {...politicalPower} />}
+          meta={`+${Number(politicalPower.incomePerGameDay).toFixed(2)} / 게임일`}
+          tone={Number(politicalPower.balance) < 25 ? "bad" : "good"}
         />
       </div>
 
@@ -355,14 +363,15 @@ export default async function PoliticsPage({
 }) {
   const session = await requireSession();
   const context = await getViewerContext(session.user.id);
-  if (!context.country) return null;
+  if (!context.country || !context.campaign) return null;
   const params = await searchParams;
   const activeTab: PoliticsTab = TABS.some(([value]) => value === params.tab)
     ? (params.tab as PoliticsTab)
     : "overview";
-  const [ledger, structure] = await Promise.all([
+  const [ledger, structure, politicalPower] = await Promise.all([
     getCountryLedger(context.country.id),
     getGovernmentStructure(context.country.id),
+    getPoliticalPowerState(context.country.id, context.campaign),
   ]);
   if (!ledger) return null;
   const politics = ledger.political;
@@ -375,6 +384,7 @@ export default async function PoliticsPage({
           <TnoReadout label="여당" value={politics?.rulingParty ?? "—"} />
           <TnoReadout label="안정" value={politics ? `${politics.stability}%` : "—"} />
           <TnoReadout label="지지" value={politics ? `${politics.governmentApproval}%` : "—"} />
+          <TnoReadout label="정치력" value={<PoliticalPowerTicker {...politicalPower} />} />
         </>
       }
       tabs={TABS.map(([value, label]) => ({
@@ -394,7 +404,7 @@ export default async function PoliticsPage({
         color={ledger.country.color}
       />
 
-      {activeTab === "overview" && <OverviewView ledger={ledger} />}
+      {activeTab === "overview" && <OverviewView ledger={ledger} politicalPower={politicalPower} />}
       {activeTab === "personnel" && <PersonnelView structure={structure} />}
       {activeTab === "assembly" && <AssemblyView ledger={ledger} />}
       {activeTab === "replace" && (

@@ -2,6 +2,7 @@ import { requireSession } from "@/src/auth/session";
 import { getCountryLedger } from "@/src/db/queries/country";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { metricLabel } from "@/src/domain/display-labels";
+import { DevelopmentTrackGrid } from "@/src/ui/development-tracks";
 import { formatDecimal, formatPercent } from "@/src/ui/format";
 import {
   TnoChips,
@@ -95,6 +96,14 @@ export default async function SocietyPage() {
           meta="세"
         />
       </div>
+
+      <TnoPlate title="국가 발전 기반" wide>
+        <DevelopmentTrackGrid tracks={ledger.developmentTracks} />
+      </TnoPlate>
+
+      <TnoPlate title="사회 제도" wide>
+        <DevelopmentTrackGrid tracks={ledger.socialInstitutions} />
+      </TnoPlate>
 
       <div className="tno-two-column">
         <TnoPlate title="인구 구조">

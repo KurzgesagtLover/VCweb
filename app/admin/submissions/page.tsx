@@ -1,8 +1,14 @@
-import { regenerateJudgmentAction, reviewJudgmentAction } from "@/src/actions/judgment";
+import {
+  createManualJudgmentAction,
+  regenerateJudgmentAction,
+  reviewJudgmentAction,
+} from "@/src/actions/judgment";
 import { requireRole } from "@/src/auth/session";
 import { getAdminSubmissionQueue } from "@/src/db/queries/submissions";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { effectOperationLabel, effectTargetLabel, metricLabel } from "@/src/domain/display-labels";
+import { POLICY_METRICS, policyMetricsForSubmission } from "@/src/domain/policy/metrics";
+import { formatMillionDollars } from "@/src/ui/format";
 import { PageHead } from "@/src/ui/page-head";
 
 export const metadata = { title: "판정 검토" };
@@ -47,11 +53,12 @@ export default async function AdminSubmissionsPage() {
                 </div>
                 <div className="submission-copy">{submission.body}</div>
                 <p className="muted">
-                  예산 {submission.budget ?? "없음"} · 기간 {submission.expectedDurationTurns}턴
+                  예산 {formatMillionDollars(submission.budget)} · 기간{" "}
+                  {submission.expectedDurationTurns}턴
                 </p>
               </section>
               <section>
-                <h3>AI 판정 근거</h3>
+                <h3>판정 근거</h3>
                 {proposal ? (
                   <>
                     <p>
@@ -137,6 +144,77 @@ export default async function AdminSubmissionsPage() {
                 </button>
               </form>
             </div>
+            {submission.status !== "APPROVED" && submission.status !== "REJECTED" && (
+              <details className="judgment-manual-panel">
+                <summary>관리자 수동 판정</summary>
+                <form
+                  action={createManualJudgmentAction}
+                  className="form-stack judgment-review-form"
+                >
+                  <input type="hidden" name="submissionId" value={submission.id} />
+                  <div className="form-grid">
+                    <label>
+                      결과
+                      <select name="verdict" defaultValue="PARTIAL" required>
+                        <option value="SUCCESS">성공</option>
+                        <option value="PARTIAL">부분 성공</option>
+                        <option value="FAILURE">실패</option>
+                        <option value="DELAYED">지연</option>
+                      </select>
+                    </label>
+                    <label className="wide">
+                      플레이어 공개 요약
+                      <textarea name="publicSummary" minLength={1} maxLength={1000} required />
+                    </label>
+                    <label className="wide">
+                      관리자 판정 근거
+                      <textarea name="adminRationale" minLength={1} maxLength={4000} required />
+                    </label>
+                    {policyMetricsForSubmission(submission.category, submission.targetMetrics).map(
+                      (metric) => {
+                        const spec = POLICY_METRICS[metric];
+                        return (
+                          <div className="effect-edit wide" key={metric}>
+                            <label>
+                              <input type="checkbox" name={`manualEnabled:${metric}`} />
+                              {spec.label} 반영
+                            </label>
+                            <label>
+                              턴당 증감값
+                              <input
+                                type="number"
+                                step="any"
+                                name={`manualValue:${metric}`}
+                                defaultValue="0"
+                                required
+                              />
+                              <small>
+                                {spec.unit === "%p" ? "0.01 = 1%p" : `단위: ${spec.unit}`}
+                              </small>
+                            </label>
+                            <label>
+                              지속 기간
+                              <input
+                                type="number"
+                                min={1}
+                                max={12}
+                                name={`manualDuration:${metric}`}
+                                defaultValue={submission.expectedDurationTurns}
+                                required
+                              />
+                            </label>
+                          </div>
+                        );
+                      },
+                    )}
+                  </div>
+                  <p className="muted">
+                    확정하면 대기 중인 AI 제안은 반려 처리되며 실행 기록은 그대로 보존됩니다.
+                  </p>
+                  <button type="submit">수동 수치로 확정</button>
+                </form>
+              </details>
+            )}
             {proposal?.status === "PENDING" && (
               <form action={reviewJudgmentAction} className="form-stack judgment-review-form">
                 <input type="hidden" name="proposalId" value={proposal.id} />

@@ -132,6 +132,25 @@ export const diplomaticMessageStatus = pgEnum("diplomatic_message_status", [
   "SENT",
   "REJECTED",
 ]);
+export const diplomaticRelationStatus = pgEnum("diplomatic_relation_status", [
+  "NORMAL",
+  "WAR",
+  "CIVIL_WAR",
+  "TRUCE",
+  "MUTUAL_DEFENSE",
+  "INDEPENDENCE_GUARANTEE",
+  "NO_RELATIONS",
+  "STALEMATE",
+  "GUERRILLA",
+]);
+export const diplomaticProposalIntent = pgEnum("diplomatic_proposal_intent", [
+  "GENERAL",
+  "ALLIANCE_FOUNDATION",
+  "MUTUAL_DEFENSE",
+  "INDEPENDENCE_GUARANTEE",
+  "TRUCE",
+]);
+export const diplomaticBlocStatus = pgEnum("diplomatic_bloc_status", ["ACTIVE", "DISSOLVED"]);
 export const superEventStatus = pgEnum("super_event_status", ["DRAFT", "BROADCAST", "ARCHIVED"]);
 export const superEventAudience = pgEnum("super_event_audience", ["ALL", "COUNTRY"]);
 

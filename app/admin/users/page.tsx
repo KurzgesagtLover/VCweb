@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { setUserStatusAction } from "@/src/actions/chat";
-import { assignCountryAction } from "@/src/actions/country";
+import { assignCountryAction, rejectCountryApplicationAction } from "@/src/actions/country";
 import { releaseCountryAssignmentAction, setUserRoleAction } from "@/src/actions/users";
 import { requireRole } from "@/src/auth/session";
 import { db } from "@/src/db";
@@ -10,6 +10,12 @@ import { getViewerContext } from "@/src/db/queries/viewer";
 import { PageHead } from "@/src/ui/page-head";
 
 export const metadata = { title: "사용자·배정" };
+
+const APPLICATION_KIND_LABELS: Record<string, string> = {
+  ASSIGN: "신규 배정",
+  TRANSFER: "국가 이적",
+  RELEASE: "국가 반납",
+};
 
 export default async function AdminUsersPage() {
   const session = await requireRole("ADMIN");
@@ -54,43 +60,71 @@ export default async function AdminUsersPage() {
               <thead>
                 <tr>
                   <th>신청자</th>
-                  <th>희망 국명</th>
-                  <th>운영 계획</th>
-                  <th>배정</th>
+                  <th>종류</th>
+                  <th>선택 국가</th>
+                  <th>메모</th>
+                  <th>처리</th>
                 </tr>
               </thead>
               <tbody>
-                {overview.applications.map(({ application, user }) => (
-                  <tr key={application.id}>
-                    <td>
-                      {user.name}
-                      <br />
-                      <small>{user.email}</small>
-                    </td>
-                    <td>{application.requestedCountryName}</td>
-                    <td title={application.reason}>{application.reason.slice(0, 100)}</td>
-                    <td>
-                      <form action={assignCountryAction} className="inline-actions">
-                        <input type="hidden" name="applicationId" value={application.id} />
-                        <select name="countryId" required defaultValue="" aria-label="배정 국가">
-                          <option value="" disabled>
-                            국가 선택
-                          </option>
-                          {overview.countries
-                            .filter(
-                              (country) => !country.isAi && !assignedCountryIds.has(country.id),
-                            )
-                            .map((country) => (
-                              <option value={country.id} key={country.id}>
-                                {country.name}
-                              </option>
-                            ))}
-                        </select>
-                        <button>배정</button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
+                {overview.applications.map(({ application, user }) => {
+                  const releasing = application.kind === "RELEASE";
+                  return (
+                    <tr key={application.id}>
+                      <td>
+                        {user.name}
+                        <br />
+                        <small>{user.email}</small>
+                      </td>
+                      <td>{APPLICATION_KIND_LABELS[application.kind] ?? application.kind}</td>
+                      <td>{releasing ? "—" : application.requestedCountryName}</td>
+                      <td title={application.reason}>{application.reason.slice(0, 100)}</td>
+                      <td>
+                        <div className="inline-actions">
+                          <form action={assignCountryAction} className="inline-actions">
+                            <input type="hidden" name="applicationId" value={application.id} />
+                            {releasing ? (
+                              <input type="hidden" name="countryId" value="" />
+                            ) : (
+                              <select
+                                name="countryId"
+                                required
+                                defaultValue={application.requestedCountryId ?? ""}
+                                aria-label="배정 국가"
+                              >
+                                <option value="" disabled>
+                                  국가 선택
+                                </option>
+                                {overview.countries
+                                  .filter(
+                                    (country) =>
+                                      !country.isAi &&
+                                      (!assignedCountryIds.has(country.id) ||
+                                        country.id === application.requestedCountryId),
+                                  )
+                                  .map((country) => (
+                                    <option value={country.id} key={country.id}>
+                                      {country.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            )}
+                            <button>{releasing ? "반납 승인" : "배정"}</button>
+                          </form>
+                          <form action={rejectCountryApplicationAction} className="inline-actions">
+                            <input type="hidden" name="applicationId" value={application.id} />
+                            <input
+                              name="reviewNote"
+                              placeholder="반려 사유"
+                              aria-label="반려 사유"
+                            />
+                            <button className="danger">반려</button>
+                          </form>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

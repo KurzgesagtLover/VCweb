@@ -150,42 +150,50 @@ export function removeRasterBorders(
 ) {
   const output = new Uint8Array(data);
   const isBorder = (pixels: Uint8Array, offset: number) =>
-    isBlack(pixels, offset) || matchesAny(pixels, offset, borderColors);
-  let pending: number[] = [];
-  for (let index = 0; index < width * height; index += 1) {
-    if (isBorder(data, index * 4)) pending.push(index);
+    matchesAny(pixels, offset, borderColors);
+  const pixelCount = width * height;
+  const fillDepth = new Uint8Array(pixelCount);
+  fillDepth.fill(255);
+  for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+    if (!isBorder(data, pixelIndex * 4)) fillDepth[pixelIndex] = 0;
   }
 
-  for (let pass = 0; pass < 5 && pending.length > 0; pass += 1) {
-    const nextPending: number[] = [];
-    const updates: Array<{ offset: number; rgb: Rgb }> = [];
-    for (const pixelIndex of pending) {
-      const x = pixelIndex % width;
-      const y = Math.floor(pixelIndex / width);
-      const candidates = new Map<string, { rgb: Rgb; count: number }>();
-      for (let dy = -1; dy <= 1; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          if ((!dx && !dy) || x + dx < 0 || y + dy < 0 || x + dx >= width || y + dy >= height)
-            continue;
-          const offset = ((y + dy) * width + x + dx) * 4;
-          if (isBorder(output, offset)) continue;
-          const rgb: Rgb = [output[offset], output[offset + 1], output[offset + 2]];
-          const key = rgb.join(",");
-          const existing = candidates.get(key);
-          if (existing) existing.count += 1;
-          else candidates.set(key, { rgb, count: 1 });
-        }
+  for (let pass = 1; pass <= 5; pass += 1) {
+    let changed = 0;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const pixelIndex = y * width + x;
+        if (fillDepth[pixelIndex] !== 255) continue;
+        let sourceIndex = -1;
+        if (y > 0 && fillDepth[pixelIndex - width] < pass) sourceIndex = pixelIndex - width;
+        else if (x > 0 && fillDepth[pixelIndex - 1] < pass) sourceIndex = pixelIndex - 1;
+        else if (x + 1 < width && fillDepth[pixelIndex + 1] < pass) sourceIndex = pixelIndex + 1;
+        else if (y + 1 < height && fillDepth[pixelIndex + width] < pass)
+          sourceIndex = pixelIndex + width;
+        else if (x > 0 && y > 0 && fillDepth[pixelIndex - width - 1] < pass)
+          sourceIndex = pixelIndex - width - 1;
+        else if (x + 1 < width && y > 0 && fillDepth[pixelIndex - width + 1] < pass)
+          sourceIndex = pixelIndex - width + 1;
+        else if (x > 0 && y + 1 < height && fillDepth[pixelIndex + width - 1] < pass)
+          sourceIndex = pixelIndex + width - 1;
+        else if (x + 1 < width && y + 1 < height && fillDepth[pixelIndex + width + 1] < pass)
+          sourceIndex = pixelIndex + width + 1;
+        if (sourceIndex < 0) continue;
+        const sourceOffset = sourceIndex * 4;
+        const targetOffset = pixelIndex * 4;
+        output[targetOffset] = output[sourceOffset];
+        output[targetOffset + 1] = output[sourceOffset + 1];
+        output[targetOffset + 2] = output[sourceOffset + 2];
+        output[targetOffset + 3] = 255;
+        fillDepth[pixelIndex] = pass;
+        changed += 1;
       }
-      const best = [...candidates.values()].sort((left, right) => right.count - left.count)[0];
-      if (best) updates.push({ offset: pixelIndex * 4, rgb: best.rgb });
-      else nextPending.push(pixelIndex);
     }
-    for (const update of updates) setRgb(output, update.offset, update.rgb);
-    pending = nextPending;
+    if (!changed) break;
   }
   return output;
 }
 
 export function removeBlackBorders(data: Uint8Array, width: number, height: number) {
-  return removeRasterBorders(data, width, height);
+  return removeRasterBorders(data, width, height, [[0, 0, 0]]);
 }

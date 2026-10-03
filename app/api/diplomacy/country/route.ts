@@ -5,6 +5,8 @@ import {
   countries,
   countryProfileRevisions,
   countryRelations,
+  diplomaticBlocMembers,
+  diplomaticBlocs,
   diplomaticOrientations,
   diplomaticProposals,
   economicSnapshots,
@@ -17,6 +19,12 @@ import {
   turns,
 } from "@/src/db/schema";
 import { getViewerContext } from "@/src/db/queries/viewer";
+import { countryEntityTypeSchema } from "@/src/domain/country/entity-type";
+import {
+  defaultDiplomaticStatus,
+  diplomaticStatusLabel,
+  resolveDiplomaticStatus,
+} from "@/src/domain/diplomacy/status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,6 +51,8 @@ export async function GET(request: Request) {
     economic,
     orientation,
     relation,
+    reverseRelation,
+    blocMembershipRows,
     leaderRows,
     treatyRows,
     foreignRelationRows,
@@ -77,6 +87,24 @@ export async function GET(request: Request) {
         eq(countryRelations.toCountryId, countryId),
       ),
     }),
+    db.query.countryRelations.findFirst({
+      where: and(
+        eq(countryRelations.campaignId, context.campaign.id),
+        eq(countryRelations.fromCountryId, countryId),
+        eq(countryRelations.toCountryId, context.country.id),
+      ),
+    }),
+    db
+      .select({ member: diplomaticBlocMembers, bloc: diplomaticBlocs })
+      .from(diplomaticBlocMembers)
+      .innerJoin(diplomaticBlocs, eq(diplomaticBlocMembers.blocId, diplomaticBlocs.id))
+      .where(
+        and(
+          eq(diplomaticBlocs.campaignId, context.campaign.id),
+          eq(diplomaticBlocs.status, "ACTIVE"),
+          inArray(diplomaticBlocMembers.countryId, [context.country.id, countryId]),
+        ),
+      ),
     db
       .select({ office: governmentOfficeDefinitions, holder: governmentOfficeHolders })
       .from(governmentOfficeDefinitions)
@@ -135,6 +163,20 @@ export async function GET(request: Request) {
     : [];
 
   const leader = leaderRows.find((row) => row.holder?.holderName) ?? null;
+  const ownMembership = blocMembershipRows.find(
+    (row) => row.member.countryId === context.country!.id,
+  );
+  const targetMembership = blocMembershipRows.find((row) => row.member.countryId === countryId);
+  const implicitStatus = defaultDiplomaticStatus(
+    countryEntityTypeSchema.parse(context.country.entityType),
+    countryEntityTypeSchema.parse(country.entityType),
+  );
+  const effectiveStatus = resolveDiplomaticStatus({
+    outgoing: relation?.status,
+    incoming: reverseRelation?.status,
+    sameBloc: Boolean(ownMembership && targetMembership?.bloc.id === ownMembership.bloc.id),
+    defaultStatus: implicitStatus,
+  });
   return Response.json({
     country: {
       id: country.id,
@@ -143,6 +185,7 @@ export async function GET(request: Request) {
       color: country.color,
       isAi: country.isAi,
       economicSystem: country.economicSystem,
+      entityType: country.entityType,
       flag: profile?.flag ?? "⚑",
       capital: profile?.capital ?? null,
       largestCity: profile?.largestCity ?? null,
@@ -173,7 +216,7 @@ export async function GET(request: Request) {
       asOfDate: political[0]?.gameDate ? String(political[0].gameDate) : null,
       nominalGdp: economic[0]?.snapshot.nominalGdp ?? null,
       gdpScale: economic[0]?.snapshot.scale ?? null,
-      currencyCode: economic[0]?.snapshot.currencyCode ?? profile?.currencyCode ?? null,
+      currencyCode: profile?.currencyCode ?? economic[0]?.snapshot.currencyCode ?? null,
       creditRating: economic[0]?.snapshot.creditRating ?? null,
       creditScore: economic[0]?.snapshot.creditScore ?? null,
       realGdpGrowth: economic[0]?.snapshot.realGdpGrowth ?? null,
@@ -185,6 +228,31 @@ export async function GET(request: Request) {
       score: relation?.score ?? 0,
       tags: relation?.tags ?? [],
       lastInteraction: relation?.lastInteraction ?? null,
+      status: effectiveStatus.status,
+      statusDirection: effectiveStatus.direction,
+      statusLabel: diplomaticStatusLabel(effectiveStatus.status, effectiveStatus.direction),
+      outgoingStatus: relation?.status ?? implicitStatus,
+      incomingStatus: reverseRelation?.status ?? implicitStatus,
+    },
+    blocs: {
+      own: ownMembership
+        ? {
+            id: ownMembership.bloc.id,
+            name: ownMembership.bloc.name,
+            acronym: ownMembership.bloc.acronym,
+            color: ownMembership.bloc.color,
+            role: ownMembership.member.role,
+          }
+        : null,
+      target: targetMembership
+        ? {
+            id: targetMembership.bloc.id,
+            name: targetMembership.bloc.name,
+            acronym: targetMembership.bloc.acronym,
+            color: targetMembership.bloc.color,
+            role: targetMembership.member.role,
+          }
+        : null,
     },
     orientation: {
       publicPrinciples: orientation?.publicPrinciples ?? null,

@@ -6,9 +6,12 @@ import {
   campaignMemberships,
   campaignMaps,
   campaigns,
+  companyClassFinancials,
   countries,
+  companyScaleStatistics,
   countryAssignments,
   countryOffices,
+  countryPoliticalResources,
   countryProfileRevisions,
   countryResearch,
   countrySetupSubmissions,
@@ -29,6 +32,8 @@ import {
   users,
 } from "../src/db/schema";
 import { DEFAULT_ECONOMY_RULES } from "../src/domain/economy/calculator";
+import { ECONOMY_STATISTICS_CURRENCY } from "../src/domain/economy/currency";
+import { STANDARD_ECONOMIC_SECTORS } from "../src/domain/economy/sectors";
 import { assertValidTechGraph } from "../src/domain/research/graph";
 import { nextTurnDeadline } from "../src/domain/turn/schedule";
 
@@ -340,6 +345,13 @@ async function seed() {
         holderName: seedCountry.leader,
         startTurnId: turnRows[0].id,
       });
+      await tx
+        .insert(countryPoliticalResources)
+        .values({ countryId: country.id, balance: "135", incomePerGameDay: "0.1" })
+        .onConflictDoUpdate({
+          target: countryPoliticalResources.countryId,
+          set: { balance: "135", incomePerGameDay: "0.1", lastAccruedAt: new Date() },
+        });
 
       for (const [index, turn] of turnRows.entries()) {
         const step = new Decimal(index).minus(7);
@@ -382,7 +394,7 @@ async function seed() {
           realGnp: realGdp.mul("1.008").toFixed(4),
           wealth: realGdp.mul("4.4").toFixed(4),
           foreignReserves: realGdp.mul("0.19").toFixed(4),
-          currencyCode: seedCountry.currency,
+          currencyCode: ECONOMY_STATISTICS_CURRENCY,
           currencyValue: new Decimal("1.0").plus(step.mul("0.002")).toString(),
           creditRating: index > 4 ? "A" : "BBB+",
           creditScore: 72 + Math.min(index, 5),
@@ -402,6 +414,11 @@ async function seed() {
           policyRate: inflation.plus("0.008").toString(),
           currentAccountToGdp: "0.018",
           productivityIndex: new Decimal(100).plus(index * 1.8).toString(),
+          povertyRate: Decimal.max("0.035", new Decimal("0.14").minus(index * 0.004)).toString(),
+          agriculturalProductivityIndex: new Decimal(96).plus(index * 1.4).toString(),
+          foodSelfSufficiency: new Decimal("0.76").plus(index * 0.008).toString(),
+          industrialCapitalStockIndex: new Decimal(98).plus(index * 2).toString(),
+          researchCapacityIndex: new Decimal(96).plus(index * 2.2).toString(),
           referenceYear: 2080,
           priceBasis: "constant",
           rulesVersion: "v1",
@@ -436,14 +453,15 @@ async function seed() {
           stateCapacity: 66 + Math.floor(index / 2),
           corruption: 31 - Math.floor(index / 3),
           democracy: 72,
+          politicalPower: new Decimal(100).plus(index * 5).toString(),
         });
         await tx.insert(economicSectors).values(
-          seedCountry.industries.map((industry, sectorIndex) => ({
+          STANDARD_ECONOMIC_SECTORS.map((sector, sectorIndex) => ({
             countryId: country.id,
             turnId: turn.id,
-            code: `${seedCountry.code}-${sectorIndex + 1}`,
-            name: industry,
-            share: sectorIndex === 0 ? "0.42" : sectorIndex === 1 ? "0.33" : "0.25",
+            code: sector.code,
+            name: sector.name,
+            share: sector.defaultShare,
             productionIndex: new Decimal(100).plus(index * 2 + sectorIndex).toString(),
             productivity: new Decimal(100).plus(index * 1.4).toString(),
             growthRate: growth.plus(sectorIndex * 0.002).toString(),
@@ -479,6 +497,59 @@ async function seed() {
           industryTags: [industry, index === 0 ? "기간산업" : "수출산업"],
         })),
       );
+      await tx.insert(companyScaleStatistics).values({
+        countryId: country.id,
+        largeEnterpriseCount: "1200",
+        mediumEnterpriseCount: "18000",
+        smallEnterpriseCount: "950000",
+      });
+      await tx.insert(companyClassFinancials).values([
+        {
+          countryId: country.id,
+          companyClass: "LARGE",
+          totalRevenue: "450000",
+          totalGrossProfit: "125000",
+          totalOperatingProfit: "52000",
+          totalNetIncome: "36000",
+          totalAssets: "1200000",
+          totalDebt: "680000",
+          totalEnterpriseValue: "900000",
+          totalEmployees: "1800000",
+          totalResearchAndDevelopmentExpense: "27000",
+          totalCapitalExpenditure: "48000",
+          automationProductivityGrowthRate: "0.03",
+        },
+        {
+          countryId: country.id,
+          companyClass: "MEDIUM",
+          totalRevenue: "320000",
+          totalGrossProfit: "92000",
+          totalOperatingProfit: "31000",
+          totalNetIncome: "21000",
+          totalAssets: "710000",
+          totalDebt: "390000",
+          totalEnterpriseValue: "540000",
+          totalEmployees: "2600000",
+          totalResearchAndDevelopmentExpense: "16000",
+          totalCapitalExpenditure: "29000",
+          automationProductivityGrowthRate: "0.02",
+        },
+        {
+          countryId: country.id,
+          companyClass: "SMALL",
+          totalRevenue: "280000",
+          totalGrossProfit: "84000",
+          totalOperatingProfit: "24000",
+          totalNetIncome: "15000",
+          totalAssets: "460000",
+          totalDebt: "230000",
+          totalEnterpriseValue: "410000",
+          totalEmployees: "4200000",
+          totalResearchAndDevelopmentExpense: "9000",
+          totalCapitalExpenditure: "18000",
+          automationProductivityGrowthRate: "0.01",
+        },
+      ]);
 
       const officeRows = await tx
         .insert(governmentOfficeDefinitions)

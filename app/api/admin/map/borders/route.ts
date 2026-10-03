@@ -5,9 +5,12 @@ import { getSession } from "@/src/auth/session";
 import { db } from "@/src/db";
 import { auditLogs, campaignMaps, mapRasterBorderLayers, mapRasters } from "@/src/db/schema";
 import {
-  applyBorderClassifications,
+  applyBorderClassificationsInPlace,
   borderClassificationsSchema,
+  borderLayerColorsSchema,
+  borderLayerKind,
   borderSourceRgbs,
+  inferDefaultBorderClassifications,
 } from "@/src/domain/map/border-palette";
 import { removeRasterBorders } from "@/src/domain/map/raster-territory";
 import { actionRateLimiter } from "@/src/services/rate-limit";
@@ -20,6 +23,7 @@ const requestSchema = z.object({
   mapId: z.string().uuid(),
   expectedRasterRevision: z.number().int().positive(),
   classifications: borderClassificationsSchema,
+  layerColors: borderLayerColorsSchema,
 });
 
 export async function POST(request: Request) {
@@ -54,31 +58,36 @@ export async function POST(request: Request) {
       { status: 409 },
     );
   }
+  const requestedClassifications = input.classifications.map((classification) => {
+    const layer = borderLayerKind(classification.kind);
+    return layer
+      ? { ...classification, displayColor: input.layerColors[layer].toUpperCase() }
+      : classification;
+  });
 
   const decoded = await sharp(raster.imageData)
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
+  const classifications = requestedClassifications.length
+    ? requestedClassifications
+    : inferDefaultBorderClassifications(decoded.data, input.layerColors);
   const { width, height } = decoded.info;
   const borderlessRaw = removeRasterBorders(
     decoded.data,
     width,
     height,
-    borderSourceRgbs(input.classifications),
+    borderSourceRgbs(classifications),
   );
-  const renderedRaw = applyBorderClassifications(
-    decoded.data,
-    borderlessRaw,
-    input.classifications,
-  );
-  const [borderlessImageData, renderedData] = await Promise.all([
-    sharp(borderlessRaw, { raw: { width, height, channels: 4 } })
-      .png({ compressionLevel: 9 })
-      .toBuffer(),
-    sharp(renderedRaw, { raw: { width, height, channels: 4 } })
-      .png({ compressionLevel: 9 })
-      .toBuffer(),
-  ]);
+  const borderlessImageData = await sharp(borderlessRaw, {
+    raw: { width, height, channels: 4 },
+  })
+    .png({ compressionLevel: 6 })
+    .toBuffer();
+  applyBorderClassificationsInPlace(decoded.data, borderlessRaw, classifications);
+  const renderedData = await sharp(decoded.data, { raw: { width, height, channels: 4 } })
+    .png({ compressionLevel: 6 })
+    .toBuffer();
   const rasterRevision = input.expectedRasterRevision + 1;
 
   await db.transaction(async (tx) => {
@@ -103,14 +112,16 @@ export async function POST(request: Request) {
       .values({
         mapId: input.mapId,
         campaignId: input.campaignId,
-        classifications: input.classifications,
+        classifications,
+        layerColors: input.layerColors,
         renderedData,
         updatedBy: session.user.id,
       })
       .onConflictDoUpdate({
         target: mapRasterBorderLayers.mapId,
         set: {
-          classifications: input.classifications,
+          classifications,
+          layerColors: input.layerColors,
           renderedData,
           revision: sql`${mapRasterBorderLayers.revision} + 1`,
           updatedBy: session.user.id,
@@ -124,12 +135,13 @@ export async function POST(request: Request) {
       targetType: "CAMPAIGN_MAP",
       targetId: input.mapId,
       afterSummary: {
-        classifications: input.classifications,
+        classifications,
+        layerColors: input.layerColors,
         rasterRevision,
       },
       reason: "업로드 지도 국경색 분류",
     });
   });
 
-  return Response.json({ rasterRevision, classifications: input.classifications });
+  return Response.json({ rasterRevision, classifications, layerColors: input.layerColors });
 }

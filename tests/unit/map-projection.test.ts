@@ -54,6 +54,22 @@ describe("map projection", () => {
     }
   });
 
+  it("로빈슨 투영은 PROJ 표준의 구간 다항식 좌표와 일치한다", () => {
+    const samples = [
+      { lon: -123.4, lat: 2.5, x: -0.6852822941912252, y: 0.03099999956958816 },
+      { lon: -123.4, lat: 42.3, x: -0.6240935828926951, y: 0.5240772342443178 },
+      { lon: 117.2, lat: 31.2, x: 0.6226003220533941, y: 0.38688437330727365 },
+      { lon: 117.2, lat: 79.2, x: 0.40999238095432544, y: 0.9325533893101529 },
+      { lon: 10, lat: 87.4, x: 0.030643120298503253, y: 0.9893639087795745 },
+    ];
+
+    for (const sample of samples) {
+      const point = projectNormalized("ROBINSON", sample.lon, sample.lat);
+      expect(point.x).toBeCloseTo(sample.x, 7);
+      expect(point.y).toBeCloseTo(sample.y, 7);
+    }
+  });
+
   it("메르카토르는 고위도를 잘라 정사각 비율을 유지한다", () => {
     expect(projectNormalized("MERCATOR", 0, 90).y).toBeCloseTo(1, 3);
     expect(projectNormalized("MERCATOR", 0, -90).y).toBeCloseTo(-1, 3);
@@ -61,7 +77,7 @@ describe("map projection", () => {
   });
 
   it("가로가 남는 이미지는 좌우 여백을 잡아 지도 영역만 샘플링한다", () => {
-    // 로빈슨 비율 1.9716보다 넓은 2:1 이미지 → 좌우가 남는다.
+    // 표준 로빈슨 비율보다 넓은 2:1 이미지 → 좌우가 남는다.
     const fit = projectionFit("ROBINSON", 4000, 2000);
     expect(fit.scaleV).toBe(1);
     expect(fit.scaleU).toBeCloseTo(MAP_PROJECTION_ASPECT.ROBINSON / 2, 6);

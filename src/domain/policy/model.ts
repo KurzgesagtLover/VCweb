@@ -116,6 +116,7 @@ export function calculatePoliticalState(input: {
   unemploymentRate: number;
   previousUnemploymentRate: number;
   incomeGini: number;
+  povertyRate?: number;
   activePolicyImpulse: number;
 }) {
   const persistentUnemployment =
@@ -128,7 +129,7 @@ export function calculatePoliticalState(input: {
   const inflationPenalty = 15 * sigmoid((input.inflationRate - 0.06) * 44) * persistentInflation;
   const deflationPenalty = 5 * sigmoid((-input.inflationRate - 0.008) * 70);
   const inequalityPenalty = 11 * sigmoid((input.incomeGini - 0.4) * 16);
-  const povertyRate = estimatePovertyRate(input);
+  const povertyRate = input.povertyRate ?? estimatePovertyRate(input);
   const povertyPenalty = 12 * sigmoid((povertyRate - 0.18) * 14);
   const recessionPenalty = clamp(Math.max(0, -input.realGdpGrowth) * 90, 0, 10);
 
@@ -165,7 +166,6 @@ export function calculatePoliticalState(input: {
     0,
     100,
   );
-
   return {
     stability: Math.round(stability),
     policySupport: Math.round(policySupport),

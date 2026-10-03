@@ -8,15 +8,15 @@ import {
   campaignMaps,
   campaigns,
   countries,
-  mapCellChanges,
-  mapChangeSets,
-  mapOwnership,
   mapRasterBorderLayers,
   mapRasterColorAssignments,
   mapRasters,
 } from "@/src/db/schema";
-import { applyBorderClassifications, borderSourceRgbs } from "@/src/domain/map/border-palette";
-import { GLOBAL_MAP_H3_RESOLUTION } from "@/src/domain/map/grid";
+import {
+  applyBorderClassificationsInPlace,
+  borderSourceRgbs,
+  inferDefaultBorderClassifications,
+} from "@/src/domain/map/border-palette";
 import { parseHexColor, rgbToHex } from "@/src/domain/map/image-colors";
 import {
   assignColorPixels,
@@ -52,13 +52,6 @@ const requestSchema = z.object({
   expectedRasterRevision: z.number().int().positive(),
 });
 
-type CellRow = {
-  cellId: string;
-  latitude: string;
-  longitude: string;
-  countryId: string | null;
-};
-
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session || session.user.role !== "ADMIN") {
@@ -87,9 +80,11 @@ export async function POST(request: Request) {
     }),
     db.query.mapRasters.findFirst({
       where: and(eq(mapRasters.mapId, input.mapId), eq(mapRasters.campaignId, input.campaignId)),
+      columns: { imageData: true, revision: true },
     }),
     db.query.mapRasterBorderLayers.findFirst({
       where: eq(mapRasterBorderLayers.mapId, input.mapId),
+      columns: { classifications: true, layerColors: true },
     }),
     db.query.mapRasterColorAssignments.findFirst({
       where: and(
@@ -116,12 +111,17 @@ export async function POST(request: Request) {
 
   const territoryRgb = parseHexColor(input.territoryColor)!;
   const oceanRgb = parseHexColor(input.oceanColor)!;
-  const borderColors = borderLayer ? borderSourceRgbs(borderLayer.classifications) : [];
   const decoded = await sharp(raster.imageData)
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
   const { width, height } = decoded.info;
+  const classifications = borderLayer
+    ? borderLayer.classifications.length
+      ? borderLayer.classifications
+      : inferDefaultBorderClassifications(decoded.data, borderLayer.layerColors)
+    : [];
+  const borderColors = borderSourceRgbs(classifications);
   if (input.x >= width || input.y >= height) {
     return Response.json({ error: "지도 밖의 위치입니다." }, { status: 400 });
   }
@@ -133,7 +133,7 @@ export async function POST(request: Request) {
   ] as const;
   const sourceHex = rgbToHex([sourceRgb[0] & 0xf8, sourceRgb[1] & 0xf8, sourceRgb[2] & 0xf8]);
   if (
-    borderLayer?.classifications.some(
+    classifications.some(
       (classification) => classification.sourceColor.toUpperCase() === sourceHex,
     )
   ) {
@@ -159,63 +159,24 @@ export async function POST(request: Request) {
     return Response.json({ error: "변경할 영토 픽셀이 없습니다." }, { status: 400 });
   }
 
-  const [png, preview] = await Promise.all([
-    sharp(decoded.data, { raw: { width, height, channels: 4 } })
-      .png({ compressionLevel: 9 })
-      .toBuffer(),
-    createRasterPreviewFromRaw(decoded.data, width, height),
-  ]);
+  const png = await sharp(decoded.data, { raw: { width, height, channels: 4 } })
+    .png({ compressionLevel: 6 })
+    .toBuffer();
+  const preview = await createRasterPreviewFromRaw(decoded.data, width, height);
   const borderlessRaw = removeRasterBorders(decoded.data, width, height, borderColors);
   const borderlessPng = await sharp(borderlessRaw, { raw: { width, height, channels: 4 } })
-    .png({ compressionLevel: 9 })
+    .png({ compressionLevel: 6 })
     .toBuffer();
-  const renderedBorderData = borderLayer
-    ? await sharp(
-        applyBorderClassifications(decoded.data, borderlessRaw, borderLayer.classifications),
-        { raw: { width, height, channels: 4 } },
-      )
-        .png({ compressionLevel: 9 })
-        .toBuffer()
-    : null;
 
-  const cells = await db.execute<CellRow>(sql`
-    WITH latest_ownership AS (
-      SELECT DISTINCT ON (cell_id) cell_id, country_id
-      FROM map_ownership
-      WHERE map_id = ${input.mapId}
-        AND revision <= ${input.expectedMapRevision}
-      ORDER BY cell_id, revision DESC
-    )
-    SELECT
-      cell.id AS "cellId",
-      cell.center_latitude AS latitude,
-      cell.center_longitude AS longitude,
-      owner.country_id AS "countryId"
-    FROM map_cells cell
-    LEFT JOIN latest_ownership owner ON owner.cell_id = cell.id
-    WHERE cell.r = ${GLOBAL_MAP_H3_RESOLUTION}
-  `);
-  const changes: Array<{ cellId: string; previousCountryId: string | null }> = [];
-  for (const cell of cells) {
-    const x = Math.min(
-      width - 1,
-      Math.max(0, Math.floor(((Number(cell.longitude) + 180) / 360) * width)),
-    );
-    const y = Math.min(
-      height - 1,
-      Math.max(0, Math.floor(((90 - Number(cell.latitude)) / 180) * height)),
-    );
-    const offset = (y * width + x) * 4;
-    const matches =
-      Math.abs(decoded.data[offset] - territoryRgb[0]) <= 8 &&
-      Math.abs(decoded.data[offset + 1] - territoryRgb[1]) <= 8 &&
-      Math.abs(decoded.data[offset + 2] - territoryRgb[2]) <= 8;
-    if (matches && cell.countryId !== input.countryId) {
-      changes.push({ cellId: cell.cellId, previousCountryId: cell.countryId });
-    }
+  let renderedBorderData: Buffer | null = null;
+  if (borderLayer) {
+    applyBorderClassificationsInPlace(decoded.data, borderlessRaw, classifications);
+    renderedBorderData = await sharp(decoded.data, { raw: { width, height, channels: 4 } })
+      .png({ compressionLevel: 6 })
+      .toBuffer();
   }
 
-  const newMapRevision = changes.length ? input.expectedMapRevision + 1 : input.expectedMapRevision;
+  const newMapRevision = input.expectedMapRevision + 1;
   const newRasterRevision = input.expectedRasterRevision + 1;
   await db.transaction(async (tx) => {
     const lockedMap = await tx.execute<{ revision: number; position: number }>(sql`
@@ -250,6 +211,7 @@ export async function POST(request: Request) {
       await tx
         .update(mapRasterBorderLayers)
         .set({
+          classifications,
           renderedData: renderedBorderData,
           revision: sql`${mapRasterBorderLayers.revision} + 1`,
           updatedBy: session.user.id,
@@ -280,52 +242,15 @@ export async function POST(request: Request) {
         set: { countryId: input.countryId, updatedBy: session.user.id, updatedAt: new Date() },
       });
 
-    let changeSetId: string | null = null;
-    if (changes.length) {
-      const [changeSet] = await tx
-        .insert(mapChangeSets)
-        .values({
-          campaignId: input.campaignId,
-          mapId: input.mapId,
-          baseRevision: input.expectedMapRevision,
-          newRevision: newMapRevision,
-          targetCountryId: input.countryId,
-          actorId: session.user.id,
-          reason: `픽셀 지도 ${input.mode} 영토 할당`,
-          cellCount: changes.length,
-        })
-        .returning();
-      changeSetId = changeSet.id;
-      for (let offset = 0; offset < changes.length; offset += 2000) {
-        const chunk = changes.slice(offset, offset + 2000);
-        await tx.insert(mapOwnership).values(
-          chunk.map((change) => ({
-            campaignId: input.campaignId,
-            mapId: input.mapId,
-            revision: newMapRevision,
-            cellId: change.cellId,
-            countryId: input.countryId,
-          })),
-        );
-        await tx.insert(mapCellChanges).values(
-          chunk.map((change) => ({
-            changeSetId: changeSet.id,
-            cellId: change.cellId,
-            previousCountryId: change.previousCountryId,
-            newCountryId: input.countryId,
-          })),
-        );
-      }
+    await tx
+      .update(campaignMaps)
+      .set({ revision: newMapRevision, updatedAt: new Date() })
+      .where(eq(campaignMaps.id, input.mapId));
+    if (lockedMap[0].position === 1) {
       await tx
-        .update(campaignMaps)
-        .set({ revision: newMapRevision, updatedAt: new Date() })
-        .where(eq(campaignMaps.id, input.mapId));
-      if (lockedMap[0].position === 1) {
-        await tx
-          .update(campaigns)
-          .set({ mapRevision: newMapRevision, updatedAt: new Date() })
-          .where(eq(campaigns.id, input.campaignId));
-      }
+        .update(campaigns)
+        .set({ mapRevision: newMapRevision, updatedAt: new Date() })
+        .where(eq(campaigns.id, input.campaignId));
     }
 
     await tx
@@ -336,14 +261,13 @@ export async function POST(request: Request) {
       campaignId: input.campaignId,
       actorId: session.user.id,
       action: `ASSIGN_PIXEL_TERRITORY_${input.mode}`,
-      targetType: changeSetId ? "MAP_CHANGE_SET" : "CAMPAIGN_MAP",
-      targetId: changeSetId ?? input.mapId,
+      targetType: "CAMPAIGN_MAP",
+      targetId: input.mapId,
       afterSummary: {
         mode: input.mode,
         countryId: input.countryId,
         territoryColor: input.territoryColor.toUpperCase(),
         changedPixels,
-        changedCells: changes.length,
         mapRevision: newMapRevision,
         rasterRevision: newRasterRevision,
       },
@@ -353,7 +277,6 @@ export async function POST(request: Request) {
 
   return Response.json({
     changedPixels,
-    changedCells: changes.length,
     mapRevision: newMapRevision,
     rasterRevision: newRasterRevision,
   });

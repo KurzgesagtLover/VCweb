@@ -6,7 +6,6 @@ import { getCountryTerritory } from "@/src/db/queries/territory";
 import { getPrimaryCampaignMap } from "@/src/db/queries/maps";
 import { mapRasterBorderLayers, mapRasterColorAssignments, mapRasters } from "@/src/db/schema";
 import { getViewerContext } from "@/src/db/queries/viewer";
-import { formatDecimal } from "@/src/ui/format";
 import { PixelCountryTerritoryMap } from "@/src/ui/pixel-country-territory-map";
 import { TnoHeadline, TnoPlate, TnoReadout, TnoWindow } from "@/src/ui/tno-frame";
 
@@ -25,12 +24,7 @@ export default async function CountryTerritoryPage() {
   const primaryMap = await getPrimaryCampaignMap(context.campaign.id);
   if (!primaryMap) return null;
   const [territory, raster, borderLayer, colorAssignment] = await Promise.all([
-    getCountryTerritory(
-      context.campaign.id,
-      primaryMap.id,
-      context.country.id,
-      primaryMap.revision,
-    ),
+    getCountryTerritory(context.country.id),
     db.query.mapRasters.findFirst({
       where: eq(mapRasters.mapId, primaryMap.id),
       columns: { revision: true },
@@ -50,6 +44,8 @@ export default async function CountryTerritoryPage() {
   const pendingRequests = territory.requests.filter(
     (request) => request.status === "PENDING",
   ).length;
+  const adm1Divisions = territory.divisions.filter((division) => division.level === 1);
+  const adm2Count = territory.divisions.filter((division) => division.level === 2).length;
 
   return (
     <TnoWindow
@@ -70,14 +66,9 @@ export default async function CountryTerritoryPage() {
           tone={colorAssignment ? "good" : "bad"}
         />
         <TnoHeadline
-          label="광역행정구역"
-          value={`${territory.divisions.length}개`}
-          meta="승인 기준"
-        />
-        <TnoHeadline
-          label="실효 면적"
-          value={formatDecimal(territory.summary.areaKm2, 0)}
-          meta={`km² · ${territory.summary.cellCount}셀`}
+          label="행정구역"
+          value={`ADM1 ${adm1Divisions.length}개`}
+          meta={`ADM2 ${adm2Count.toLocaleString("ko-KR")}개`}
         />
         <TnoHeadline
           label="검토 대기"
@@ -98,10 +89,10 @@ export default async function CountryTerritoryPage() {
       </div>
 
       <div className="tno-two-column">
-        <TnoPlate title="광역행정구역">
-          {territory.divisions.length ? (
+        <TnoPlate title="ADM1 행정구역">
+          {adm1Divisions.length ? (
             <ul className="tno-entity-list">
-              {territory.divisions.map((division) => (
+              {adm1Divisions.map((division) => (
                 <li key={division.id}>
                   <span>{division.name}</span>
                   <em>{division.typeName}</em>
@@ -110,7 +101,7 @@ export default async function CountryTerritoryPage() {
               ))}
             </ul>
           ) : (
-            <p>등록된 광역행정구역이 없습니다.</p>
+            <p>등록된 ADM1 행정구역이 없습니다.</p>
           )}
         </TnoPlate>
 

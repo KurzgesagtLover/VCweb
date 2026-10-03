@@ -15,7 +15,7 @@ export const MAP_PROJECTION_LABELS: Record<MapProjection, string> = {
   EQUIRECTANGULAR: "정거원통 (2:1 위경도 격자)",
   MERCATOR: "메르카토르 (정사각 세계지도)",
   MOLLWEIDE: "몰바이데 (타원)",
-  ROBINSON: "로빈슨 (위키백과식 타원)",
+  ROBINSON: "로빈슨 (PROJ 표준)",
   WINKEL_TRIPEL: "빙켈 트리펠 (내셔널지오그래픽식)",
   EQUAL_EARTH: "이퀄 어스",
 };
@@ -25,7 +25,7 @@ export const MAP_PROJECTION_ASPECT: Record<MapProjection, number> = {
   EQUIRECTANGULAR: 2,
   MERCATOR: 1,
   MOLLWEIDE: 2,
-  ROBINSON: 1.9716,
+  ROBINSON: 1.9716554648,
   WINKEL_TRIPEL: 1.6366,
   EQUAL_EARTH: 2.0463,
 };
@@ -41,13 +41,50 @@ export function parseMapProjection(value: unknown): MapProjection {
 const DEG = Math.PI / 180;
 const WINKEL_COS_PHI1 = 2 / Math.PI;
 
-const ROBINSON_X = [
-  1.0, 0.9986, 0.9954, 0.99, 0.9822, 0.973, 0.96, 0.9427, 0.9216, 0.8962, 0.8679, 0.835, 0.7986,
-  0.7597, 0.7186, 0.6732, 0.6213, 0.5722, 0.5322,
+type RobinsonCoefficients = readonly [number, number, number, number];
+
+// PROJ의 +proj=robin 구현과 동일한 5도 구간별 3차 다항식 계수다.
+const ROBINSON_X: readonly RobinsonCoefficients[] = [
+  [1, 2.2199e-17, -7.15515e-5, 3.1103e-6],
+  [0.9986, -4.82243e-4, -2.4897e-5, -1.3309e-6],
+  [0.9954, -8.3103e-4, -4.48605e-5, -9.86701e-7],
+  [0.99, -1.35364e-3, -5.9661e-5, 3.6777e-6],
+  [0.9822, -1.67442e-3, -4.49547e-6, -5.72411e-6],
+  [0.973, -2.14868e-3, -9.03571e-5, 1.8736e-8],
+  [0.96, -3.05085e-3, -9.00761e-5, 1.64917e-6],
+  [0.9427, -3.82792e-3, -6.53386e-5, -2.6154e-6],
+  [0.9216, -4.67746e-3, -1.0457e-4, 4.81243e-6],
+  [0.8962, -5.36223e-3, -3.23831e-5, -5.43432e-6],
+  [0.8679, -6.09363e-3, -1.13898e-4, 3.32484e-6],
+  [0.835, -6.98325e-3, -6.40253e-5, 9.34959e-7],
+  [0.7986, -7.55338e-3, -5.00009e-5, 9.35324e-7],
+  [0.7597, -7.98324e-3, -3.5971e-5, -2.27626e-6],
+  [0.7186, -8.51367e-3, -7.01149e-5, -8.6303e-6],
+  [0.6732, -9.86209e-3, -1.99569e-4, 1.91974e-5],
+  [0.6213, -1.0418e-2, 8.83923e-5, 6.24051e-6],
+  [0.5722, -9.06601e-3, 1.82e-4, 6.24051e-6],
+  [0.5322, -6.77797e-3, 2.75608e-4, 6.24051e-6],
 ];
-const ROBINSON_Y = [
-  0.0, 0.062, 0.124, 0.186, 0.248, 0.31, 0.372, 0.434, 0.4958, 0.5571, 0.6176, 0.6769, 0.7346,
-  0.7903, 0.8435, 0.8936, 0.9394, 0.9761, 1.0,
+const ROBINSON_Y: readonly RobinsonCoefficients[] = [
+  [-5.20417e-18, 1.24e-2, 1.21431e-18, -8.45284e-11],
+  [0.062, 1.24e-2, -1.26793e-9, 4.22642e-10],
+  [0.124, 1.24e-2, 5.07171e-9, -1.60604e-9],
+  [0.186, 1.23999e-2, -1.90189e-8, 6.00152e-9],
+  [0.248, 1.24002e-2, 7.10039e-8, -2.24e-8],
+  [0.31, 1.23992e-2, -2.64997e-7, 8.35986e-8],
+  [0.372, 1.24029e-2, 9.88983e-7, -3.11994e-7],
+  [0.434, 1.23893e-2, -3.69093e-6, -4.35621e-7],
+  [0.4958, 1.23198e-2, -1.02252e-5, -3.45523e-7],
+  [0.5571, 1.21916e-2, -1.54081e-5, -5.82288e-7],
+  [0.6176, 1.19938e-2, -2.41424e-5, -5.25327e-7],
+  [0.6769, 1.1713e-2, -3.20223e-5, -5.16405e-7],
+  [0.7346, 1.13541e-2, -3.97684e-5, -6.09052e-7],
+  [0.7903, 1.09107e-2, -4.89042e-5, -1.04739e-6],
+  [0.8435, 1.03431e-2, -6.4615e-5, -1.40374e-9],
+  [0.8936, 9.69686e-3, -6.4636e-5, -8.547e-6],
+  [0.9394, 8.40947e-3, -1.92841e-4, -4.2106e-6],
+  [0.9761, 6.16527e-3, -2.56e-4, -4.2106e-6],
+  [1, 3.28947e-3, -3.19159e-4, -4.2106e-6],
 ];
 const EQUAL_EARTH_A = [1.340264, -0.081106, 0.000893, 0.003796];
 
@@ -65,32 +102,22 @@ function equalEarthY(theta: number) {
 const EQUAL_EARTH_Y_MAX = equalEarthY(Math.asin(Math.sqrt(3) / 2));
 const EQUAL_EARTH_X_MAX = Math.PI / ((Math.sqrt(3) / 2) * EQUAL_EARTH_A[0]);
 
-/**
- * 로빈슨 도법은 5도 간격 표로 정의되므로 보간 방식이 곧 정확도다. 선형 보간은
- * 표 사이에서 반폭 기준 0.3%까지 벌어져 경도 ±180 근처에서 지도 경계를 벗어난다.
- * 표준 구현과 같이 곡률을 반영하는 Catmull-Rom 스플라인으로 보간한다.
- */
-function catmullRom(table: number[], index: number, ratio: number) {
-  const at = (position: number) => table[Math.max(0, Math.min(table.length - 1, position))];
-  const p0 = at(index - 1);
-  const p1 = at(index);
-  const p2 = at(index + 1);
-  const p3 = at(index + 2);
+function robinsonPolynomial(coefficients: RobinsonCoefficients, offsetDegrees: number) {
   return (
-    p1 +
-    0.5 *
-      ratio *
-      (p2 - p0 + ratio * (2 * p0 - 5 * p1 + 4 * p2 - p3 + ratio * (3 * (p1 - p2) + p3 - p0)))
+    coefficients[0] +
+    offsetDegrees *
+      (coefficients[1] + offsetDegrees * (coefficients[2] + offsetDegrees * coefficients[3]))
   );
 }
 
 function robinsonFactors(absLatDeg: number) {
-  const position = Math.min(18, Math.max(0, absLatDeg / 5));
-  const index = Math.min(17, Math.floor(position));
-  const ratio = position - index;
+  const clampedLat = Math.min(90, Math.max(0, absLatDeg));
+  const position = clampedLat / 5;
+  const index = Math.min(18, Math.floor(position + 1e-15));
+  const offsetDegrees = clampedLat - index * 5;
   return {
-    x: catmullRom(ROBINSON_X, index, ratio),
-    y: catmullRom(ROBINSON_Y, index, ratio),
+    x: robinsonPolynomial(ROBINSON_X[index], offsetDegrees),
+    y: robinsonPolynomial(ROBINSON_Y[index], offsetDegrees),
   };
 }
 
@@ -210,6 +237,62 @@ export function boundsFit(
   };
 }
 
+/**
+ * 정규화 평면 좌표를 경위도로 되돌린다. 정거원통·메르카토르는 닫힌 해가 있고,
+ * 나머지는 수치 야코비안을 쓰는 뉴턴법으로 푼다. 초기값은 정거원통 근사다.
+ */
+export function unprojectNormalized(
+  projection: MapProjection,
+  x: number,
+  y: number,
+): { lon: number; lat: number } {
+  if (projection === "EQUIRECTANGULAR") {
+    return { lon: x * 180, lat: y * 90 };
+  }
+  if (projection === "MERCATOR") {
+    return { lon: x * 180, lat: (2 * Math.atan(Math.exp(y * Math.PI)) - Math.PI / 2) / DEG };
+  }
+
+  let lon = Math.max(-180, Math.min(180, x * 180));
+  let lat = Math.max(-90, Math.min(90, y * 90));
+  const step = 1e-4;
+  for (let iteration = 0; iteration < 24; iteration += 1) {
+    const point = projectNormalized(projection, lon, lat);
+    const errorX = point.x - x;
+    const errorY = point.y - y;
+    if (Math.abs(errorX) < 1e-10 && Math.abs(errorY) < 1e-10) break;
+    // 경계에서 편미분이 잘리지 않도록 안쪽을 향해 차분한다.
+    const lonStep = lon + step > 180 ? -step : step;
+    const latStep = lat + step > 90 ? -step : step;
+    const byLon = projectNormalized(projection, lon + lonStep, lat);
+    const byLat = projectNormalized(projection, lon, lat + latStep);
+    const j11 = (byLon.x - point.x) / lonStep;
+    const j12 = (byLat.x - point.x) / latStep;
+    const j21 = (byLon.y - point.y) / lonStep;
+    const j22 = (byLat.y - point.y) / latStep;
+    const determinant = j11 * j22 - j12 * j21;
+    if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) break;
+    lon -= (j22 * errorX - j12 * errorY) / determinant;
+    lat -= (-j21 * errorX + j11 * errorY) / determinant;
+    lon = Math.max(-180, Math.min(180, lon));
+    lat = Math.max(-90, Math.min(90, lat));
+  }
+  return { lon, lat };
+}
+
+/** 이미지 UV(좌상단 원점)를 경위도로 되돌린다. */
+export function unprojectUv(
+  projection: MapProjection,
+  u: number,
+  v: number,
+  fit: ProjectionFit = IDENTITY_FIT,
+) {
+  if (!fit.scaleU || !fit.scaleV) return { lon: 0, lat: 0 };
+  const x = ((u - fit.offsetU) / fit.scaleU - 0.5) * 2;
+  const y = (0.5 - (v - fit.offsetV) / fit.scaleV) * 2;
+  return unprojectNormalized(projection, x, y);
+}
+
 /** 경위도를 이미지 UV(좌상단 원점)로 변환한다. */
 export function projectToUv(
   projection: MapProjection,
@@ -228,13 +311,47 @@ export function projectToUv(
 export const MAP_PROJECTION_GLSL = /* glsl */ `
 const float PI = 3.141592653589793;
 const float WINKEL_COS_PHI1 = 2.0 / PI;
-const float ROBINSON_X[19] = float[19](
-  1.0, 0.9986, 0.9954, 0.99, 0.9822, 0.973, 0.96, 0.9427, 0.9216, 0.8962,
-  0.8679, 0.835, 0.7986, 0.7597, 0.7186, 0.6732, 0.6213, 0.5722, 0.5322
+const vec4 ROBINSON_X[19] = vec4[19](
+  vec4(1.0, 2.2199e-17, -7.15515e-5, 3.1103e-6),
+  vec4(0.9986, -0.000482243, -2.4897e-5, -1.3309e-6),
+  vec4(0.9954, -0.00083103, -4.4861e-5, -9.86701e-7),
+  vec4(0.99, -0.00135364, -5.9661e-5, 3.6777e-6),
+  vec4(0.9822, -0.00167442, -4.49547e-6, -5.72411e-6),
+  vec4(0.973, -0.00214868, -9.03571e-5, 1.8736e-8),
+  vec4(0.96, -0.00305085, -9.00761e-5, 1.64917e-6),
+  vec4(0.9427, -0.00382792, -6.53386e-5, -2.6154e-6),
+  vec4(0.9216, -0.00467746, -0.00010457, 4.81243e-6),
+  vec4(0.8962, -0.00536223, -3.23831e-5, -5.43432e-6),
+  vec4(0.8679, -0.00609363, -0.000113898, 3.32484e-6),
+  vec4(0.835, -0.00698325, -6.40253e-5, 9.34959e-7),
+  vec4(0.7986, -0.00755338, -5.00009e-5, 9.35324e-7),
+  vec4(0.7597, -0.00798324, -3.5971e-5, -2.27626e-6),
+  vec4(0.7186, -0.00851367, -7.01149e-5, -8.6303e-6),
+  vec4(0.6732, -0.00986209, -0.000199569, 1.91974e-5),
+  vec4(0.6213, -0.010418, 8.83923e-5, 6.24051e-6),
+  vec4(0.5722, -0.00906601, 0.000182, 6.24051e-6),
+  vec4(0.5322, -0.00677797, 0.000275608, 6.24051e-6)
 );
-const float ROBINSON_Y[19] = float[19](
-  0.0, 0.062, 0.124, 0.186, 0.248, 0.31, 0.372, 0.434, 0.4958, 0.5571,
-  0.6176, 0.6769, 0.7346, 0.7903, 0.8435, 0.8936, 0.9394, 0.9761, 1.0
+const vec4 ROBINSON_Y[19] = vec4[19](
+  vec4(-5.20417e-18, 0.0124, 1.21431e-18, -8.45284e-11),
+  vec4(0.062, 0.0124, -1.26793e-9, 4.22642e-10),
+  vec4(0.124, 0.0124, 5.07171e-9, -1.60604e-9),
+  vec4(0.186, 0.0123999, -1.90189e-8, 6.00152e-9),
+  vec4(0.248, 0.0124002, 7.10039e-8, -2.24e-8),
+  vec4(0.31, 0.0123992, -2.64997e-7, 8.35986e-8),
+  vec4(0.372, 0.0124029, 9.88983e-7, -3.11994e-7),
+  vec4(0.434, 0.0123893, -3.69093e-6, -4.35621e-7),
+  vec4(0.4958, 0.0123198, -1.02252e-5, -3.45523e-7),
+  vec4(0.5571, 0.0121916, -1.54081e-5, -5.82288e-7),
+  vec4(0.6176, 0.0119938, -2.41424e-5, -5.25327e-7),
+  vec4(0.6769, 0.011713, -3.20223e-5, -5.16405e-7),
+  vec4(0.7346, 0.0113541, -3.97684e-5, -6.09052e-7),
+  vec4(0.7903, 0.0109107, -4.89042e-5, -1.04739e-6),
+  vec4(0.8435, 0.0103431, -6.4615e-5, -1.40374e-9),
+  vec4(0.8936, 0.00969686, -6.4636e-5, -8.547e-6),
+  vec4(0.9394, 0.00840947, -0.000192841, -4.2106e-6),
+  vec4(0.9761, 0.00616527, -0.000256, -4.2106e-6),
+  vec4(1.0, 0.00328947, -0.000319159, -4.2106e-6)
 );
 const float EQUAL_EARTH_A1 = 1.340264;
 const float EQUAL_EARTH_A2 = -0.081106;
@@ -243,26 +360,19 @@ const float EQUAL_EARTH_A4 = 0.003796;
 const float EQUAL_EARTH_X_MAX = ${EQUAL_EARTH_X_MAX.toFixed(8)};
 const float EQUAL_EARTH_Y_MAX = ${EQUAL_EARTH_Y_MAX.toFixed(8)};
 
-float robinsonTable(int table, int index) {
-  int clamped = clamp(index, 0, 18);
-  return table == 0 ? ROBINSON_X[clamped] : ROBINSON_Y[clamped];
-}
-
-/** 5도 간격 표를 Catmull-Rom으로 보간해 경계 오차를 1픽셀 미만으로 줄인다. */
-float robinsonSpline(int table, int index, float ratio) {
-  float p0 = robinsonTable(table, index - 1);
-  float p1 = robinsonTable(table, index);
-  float p2 = robinsonTable(table, index + 1);
-  float p3 = robinsonTable(table, index + 2);
-  return p1 + 0.5 * ratio * (p2 - p0 + ratio * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3
-    + ratio * (3.0 * (p1 - p2) + p3 - p0)));
+float robinsonPolynomial(vec4 coefficients, float offsetDegrees) {
+  return coefficients.x + offsetDegrees * (coefficients.y
+    + offsetDegrees * (coefficients.z + offsetDegrees * coefficients.w));
 }
 
 vec2 robinsonFactors(float absLatDeg) {
-  float position = clamp(absLatDeg / 5.0, 0.0, 18.0);
-  int index = int(min(17.0, floor(position)));
-  float ratio = position - float(index);
-  return vec2(robinsonSpline(0, index, ratio), robinsonSpline(1, index, ratio));
+  float clampedLat = clamp(absLatDeg, 0.0, 90.0);
+  int index = int(min(18.0, floor(clampedLat / 5.0 + 1e-7)));
+  float offsetDegrees = clampedLat - float(index) * 5.0;
+  return vec2(
+    robinsonPolynomial(ROBINSON_X[index], offsetDegrees),
+    robinsonPolynomial(ROBINSON_Y[index], offsetDegrees)
+  );
 }
 
 float mollweideTheta(float lat) {

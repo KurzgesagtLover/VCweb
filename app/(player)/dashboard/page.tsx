@@ -6,6 +6,8 @@ import { getDiplomacyDesk } from "@/src/db/queries/diplomacy";
 import { getCountryEvents } from "@/src/db/queries/events";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { domainLabel, metricLabel } from "@/src/domain/display-labels";
+import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
+import { CountryFlag } from "@/src/ui/country-flag";
 import { formatDecimal, formatMoney, formatPercent } from "@/src/ui/format";
 import {
   TnoBanner,
@@ -187,7 +189,7 @@ export default async function DashboardPage({
                     { label: "진행 외교", value: `${openProposals}건` },
                     {
                       label: "정부지출",
-                      value: formatMoney(economy?.governmentSpending, economy?.currencyCode),
+                      value: formatMoney(economy?.governmentSpending),
                     },
                     { label: "부채/GDP", value: formatPercent(economy?.debtToGdp, 1) },
                   ]}
@@ -229,13 +231,13 @@ export default async function DashboardPage({
             />
             <TnoHeadline
               label="실질 GDP"
-              value={formatMoney(economy?.realGdp, economy?.currencyCode)}
+              value={formatMoney(economy?.realGdp)}
               meta={`기준연도 ${economy?.referenceYear ?? "—"}`}
             />
             <TnoHeadline
               label="1인당 GDP"
               value={perCapita ? formatDecimal(perCapita, 0) : "—"}
-              meta={economy?.currencyCode ?? "기준화폐"}
+              meta={ECONOMY_STATISTICS_CURRENCY}
             />
             <TnoHeadline
               label="총면적"
@@ -260,7 +262,7 @@ export default async function DashboardPage({
                   { label: "국가원수", value: headOfState ?? "—" },
                   {
                     label: "공식 화폐",
-                    value: profile?.officialCurrency ?? economy?.currencyCode ?? "—",
+                    value: profile?.officialCurrency ?? profile?.currencyCode ?? "—",
                   },
                   { label: "행성", value: profile?.planet ?? "—" },
                 ]}
@@ -271,7 +273,12 @@ export default async function DashboardPage({
               <TnoPlate title="국가 상징">
                 <TnoKeyValues
                   items={[
-                    ["국기", profile?.flag ?? "미등록"],
+                    [
+                      "국기",
+                      <span className="country-flag-inline" key="flag">
+                        <CountryFlag value={profile?.flag} name={ledger.country.name} />
+                      </span>,
+                    ],
                     ["표어", profile?.motto ?? "미등록"],
                     ["국가(國歌)", profile?.nationalAnthem ?? "미등록"],
                     ["국목", profile?.nationalTree ?? "미등록"],

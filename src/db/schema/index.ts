@@ -1,6 +1,7 @@
 export * from "./auth";
 export * from "./ai";
 export * from "./campaign";
+export * from "./construction";
 export * from "./country";
 export * from "./enums";
 export * from "./gameplay";

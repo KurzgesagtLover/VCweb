@@ -8,6 +8,7 @@ import { getCountryPolicyGoals, getCountrySubmissions } from "@/src/db/queries/s
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { SERIAL_CATEGORY_LABELS, type SerialCategory } from "@/src/domain/policy/metrics";
 import { metricLabel } from "@/src/domain/display-labels";
+import { formatMillionDollars } from "@/src/ui/format";
 import { PolicyCreateDialogs } from "@/src/ui/policy-create-dialogs";
 import { TnoHeadline, TnoPlate, TnoReadout, TnoWindow } from "@/src/ui/tno-frame";
 import { SubmissionEditor } from "@/src/ui/submission-editor";
@@ -167,6 +168,10 @@ export default async function SubmissionsPage() {
 
                   <dl className="policy-card-stats">
                     <div>
+                      <dt>예산</dt>
+                      <dd>{formatMillionDollars(submission.budget)}</dd>
+                    </div>
+                    <div>
                       <dt>기간</dt>
                       <dd>{submission.expectedDurationTurns}턴</dd>
                     </div>
@@ -207,9 +212,22 @@ export default async function SubmissionsPage() {
                       <input type="hidden" name="submissionId" value={submission.id} />
                       <label>
                         홍보 예산
-                        <input name="amount" inputMode="decimal" required />
+                        <div className="input-with-unit">
+                          <input
+                            name="amount"
+                            inputMode="decimal"
+                            required
+                            min={0}
+                            step="any"
+                            placeholder="예: 5"
+                          />
+                          <small>$1M</small>
+                        </div>
                       </label>
                       <button type="submit">홍보 집행</button>
+                      <span className="muted">
+                        누적 홍보 {formatMillionDollars(submission.promotionSpend)}
+                      </span>
                       {Number(submission.overpromotionPenalty) > 0.05 && (
                         <span className="form-message">
                           과도한 홍보로 연재 효과가 감소하고 있습니다.

@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { updateCountryEconomicSystemAction } from "@/src/actions/country";
+import { adjustCountryDevelopmentAction } from "@/src/actions/development";
 import {
   createAdministrativeDivisionAction,
   reviewAdministrativeDivisionRequestAction,
@@ -9,6 +10,9 @@ import { requireRole } from "@/src/auth/session";
 import { db } from "@/src/db";
 import { administrativeDivisionRequests } from "@/src/db/schema";
 import { getCountryLedger } from "@/src/db/queries/country";
+import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
+import { DeleteCountryButton } from "@/src/ui/delete-country-button";
+import { DevelopmentTrackGrid } from "@/src/ui/development-tracks";
 import { RememberedDisclosure } from "@/src/ui/disclosure";
 import { formatMoney, formatPercent } from "@/src/ui/format";
 import { DataList, MetricCard } from "@/src/ui/metric-card";
@@ -27,17 +31,20 @@ export default async function AdminCountryDetail({
     where: eq(administrativeDivisionRequests.countryId, countryId),
     orderBy: [desc(administrativeDivisionRequests.createdAt)],
   });
+  const adm1Divisions = ledger.divisions.filter((division) => division.level === 1);
+  const adm2Count = ledger.divisions.filter((division) => division.level === 2).length;
   return (
     <div className="section-stack">
       <PageHead
         eyebrow="ADMIN / COUNTRY LEDGER"
-        title={`${ledger.profile?.flag ?? "⚑"} ${ledger.country.name}`}
+        title={ledger.country.name}
         description="승인 원장과 현재 스냅샷을 분야별로 확인합니다. 수치 변경은 경제·정치 diff 화면에서 제안합니다."
         aside={<span className="status-pill">{ledger.country.setupStatus}</span>}
       />
       <section className="panel settings-panel">
         <div className="panel-head">
           <h2>국가 운영 유형</h2>
+          <DeleteCountryButton countryId={countryId} countryName={ledger.country.name} />
         </div>
         <form action={updateCountryEconomicSystemAction} className="inline-actions">
           <input type="hidden" name="countryId" value={countryId} />
@@ -51,12 +58,43 @@ export default async function AdminCountryDetail({
       <section className="metric-grid">
         <MetricCard label="코드" value={ledger.country.code} />
         <MetricCard label="수도" value={ledger.profile?.capital} />
-        <MetricCard
-          label="실질 GDP"
-          value={formatMoney(ledger.economic?.realGdp, ledger.economic?.currencyCode)}
-        />
+        <MetricCard label="실질 GDP" value={formatMoney(ledger.economic?.realGdp)} />
         <MetricCard label="성장률" value={formatPercent(ledger.economic?.realGdpGrowth)} />
         <MetricCard label="안정도" value={ledger.political?.stability} />
+      </section>
+      <section className="panel settings-panel">
+        <div className="panel-head">
+          <h2>국가 발전 기반</h2>
+        </div>
+        <DevelopmentTrackGrid tracks={ledger.developmentTracks} />
+        <div className="panel-head development-section-head">
+          <h3>사회 제도</h3>
+        </div>
+        <DevelopmentTrackGrid tracks={ledger.socialInstitutions} />
+        <form action={adjustCountryDevelopmentAction} className="form-grid">
+          <input type="hidden" name="countryId" value={countryId} />
+          <label>
+            지표
+            <select name="metric" required>
+              {[...ledger.developmentTracks, ...ledger.socialInstitutions].map((track) => (
+                <option key={track.key} value={track.key}>
+                  {track.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            진척도 변화
+            <input name="delta" type="number" min="-150" max="150" step="1" required />
+          </label>
+          <label>
+            사유
+            <input name="reason" required minLength={3} maxLength={1000} />
+          </label>
+          <div className="inline-actions">
+            <button type="submit">적용</button>
+          </div>
+        </form>
       </section>
       <RememberedDisclosure storageKey={`admin-country-${countryId}`} title="전체 원장 보기">
         <DataList
@@ -69,26 +107,28 @@ export default async function AdminCountryDetail({
             ["정부 형태", ledger.political?.governmentForm],
             ["국가원수", ledger.political?.headOfState],
             ["인구", ledger.demographic?.population],
-            ["통화", ledger.economic?.currencyCode],
+            ["경제 통계 통화", ECONOMY_STATISTICS_CURRENCY],
             ["계산 규칙", ledger.economic?.rulesVersion],
           ]}
         />
       </RememberedDisclosure>
       <section className="panel settings-panel">
         <div className="panel-head">
-          <h2>광역행정구역</h2>
-          <span className="status-pill">{ledger.divisions.length}개</span>
+          <h2>행정구역</h2>
+          <span className="status-pill">
+            ADM1 {adm1Divisions.length} · ADM2 {adm2Count.toLocaleString("ko-KR")}
+          </span>
         </div>
         <div className="division-list">
-          {ledger.divisions.length ? (
-            ledger.divisions.map((division) => (
+          {adm1Divisions.length ? (
+            adm1Divisions.map((division) => (
               <div key={division.id}>
                 <strong>{division.name}</strong>
                 <span>{division.typeName}</span>
               </div>
             ))
           ) : (
-            <div className="empty-state">등록된 광역행정구역이 없습니다.</div>
+            <div className="empty-state">등록된 ADM1 행정구역이 없습니다.</div>
           )}
         </div>
         <form action={createAdministrativeDivisionAction} className="form-grid">

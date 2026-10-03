@@ -34,8 +34,16 @@ const baseline: EconomyInput = {
   policyRate: "0.035",
   currentAccountToGdp: "0.018",
   productivityIndex: "104",
+  povertyRate: "0.1",
+  agriculturalProductivityIndex: "102",
+  foodSelfSufficiency: "0.82",
+  industrialCapitalStockIndex: "105",
+  researchCapacityIndex: "106",
   educationIndex: "0.74",
   researchInvestmentRate: "0.031",
+  publicInvestmentRate: "0.05",
+  educationSpendingRate: "0.04",
+  welfareSpendingRate: "0.05",
   stateCapacity: "68",
   structuralReform: "0",
   externalShock: "0",
@@ -55,7 +63,9 @@ describe("admin economy simulator", () => {
     expect(baseline).toEqual(before);
     expect(
       projection.points.every((point) =>
-        Object.values(point).every((value) => Number.isFinite(value)),
+        Object.values(point)
+          .filter((value): value is number => typeof value === "number")
+          .every((value) => Number.isFinite(value)),
       ),
     ).toBe(true);
   });
@@ -67,7 +77,9 @@ describe("admin economy simulator", () => {
       baseline,
       {
         ...defaults,
-        taxRate: "0.3",
+        incomeTaxRate: "0.3",
+        corporateTaxRate: "0.25",
+        otherTaxRate: "0.2",
         governmentSpendingGrowth: "0.04",
         policyRate: "0.08",
         researchInvestmentRate: "0.05",
@@ -88,7 +100,9 @@ describe("admin economy simulator", () => {
       {
         ...defaults,
         turns: 9999,
-        taxRate: "8",
+        incomeTaxRate: "8",
+        corporateTaxRate: "9",
+        otherTaxRate: "10",
         governmentSpendingGrowth: "-4",
         policyRate: "9",
         externalShock: "-99",
@@ -101,12 +115,77 @@ describe("admin economy simulator", () => {
 
     expect(projection.settings.turns).toBe(200);
     expect(projection.settings.shockDuration).toBe(200);
-    expect(projection.settings.taxRate).toBe("1");
+    expect(projection.settings.incomeTaxRate).toBe("0.75");
+    expect(projection.settings.corporateTaxRate).toBe("0.75");
+    expect(projection.settings.otherTaxRate).toBe("0.75");
     expect(projection.settings.governmentSpendingGrowth).toBe("-0.5");
     expect(projection.settings.policyRate).toBe("0.35");
     expect(projection.settings.externalShock).toBe("-2");
     expect(projection.settings.educationIndex).toBe("1");
     expect(projection.settings.stateCapacity).toBe("0");
     expect(projection.points).toHaveLength(201);
+  });
+
+  it("distinguishes advanced and developing economic structures", () => {
+    const developing: EconomyInput = {
+      ...baseline,
+      population: "90000000",
+      realGdp: "450000",
+      nominalGdp: "480000",
+      productivityIndex: "70",
+      educationIndex: "0.48",
+      stateCapacity: "38",
+      creditScore: "42",
+      financialHealth: "43",
+      corporateHealth: "45",
+    };
+    const advanced = runEconomyProjection(
+      baseline,
+      defaultEconomyProjectionSettings(baseline, 20),
+      DEFAULT_ECONOMY_RULES,
+    );
+    const emerging = runEconomyProjection(
+      developing,
+      defaultEconomyProjectionSettings(developing, 20),
+      DEFAULT_ECONOMY_RULES,
+    );
+
+    expect(advanced.points[0]?.developmentStage).toBe("ADVANCED");
+    expect(emerging.points[0]?.developmentStage).toBe("DEVELOPING");
+    expect(advanced.points.at(-1)?.realGdpIndex).not.toBe(emerging.points.at(-1)?.realGdpIndex);
+  });
+
+  it("applies approved multi-turn effects and reports plan progress", () => {
+    const settings = defaultEconomyProjectionSettings(baseline, 8);
+    const projection = runEconomyProjection(baseline, settings, DEFAULT_ECONOMY_RULES, {
+      modifiers: [
+        {
+          id: "growth-policy",
+          metric: "realGdpGrowth",
+          operation: "ADD",
+          value: "0.015",
+          startTurnOffset: 0,
+          durationTurns: 6,
+        },
+      ],
+      goals: [
+        {
+          id: "growth-goal",
+          label: "성장률 목표",
+          metric: "realGdpGrowth",
+          baselineValue: "0.03",
+          latestValue: "0.03",
+          targetValue: "0.04",
+          targetTurn: 8,
+        },
+      ],
+    });
+    const withoutPolicy = runEconomyProjection(baseline, settings, DEFAULT_ECONOMY_RULES);
+
+    expect(projection.points[1]?.realGdpGrowth).toBeGreaterThan(
+      withoutPolicy.points[1]?.realGdpGrowth ?? 0,
+    );
+    expect(projection.goalResults).toHaveLength(1);
+    expect(Number.isFinite(projection.goalResults[0]?.progress)).toBe(true);
   });
 });

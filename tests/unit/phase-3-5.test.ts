@@ -1,4 +1,3 @@
-import { cellToCenterChild, cellToParent, getNumCells, latLngToCell } from "h3-js";
 import { describe, expect, it } from "vitest";
 import { judgmentProposalSchema } from "../../src/ai/judgment-schema";
 import { FakeAIProvider } from "../../src/ai/providers";
@@ -6,13 +5,6 @@ import { parseAiRoute } from "../../src/ai/catalog";
 import { diplomacyResponseSchema, turnEventSchema } from "../../src/ai/task-schemas";
 import { validateEffect } from "../../src/domain/effects/registry";
 import { evaluateTrigger } from "../../src/domain/events/trigger";
-import {
-  getMapTileResolution,
-  getMinimumSafeTileZoom,
-  GLOBAL_MAP_H3_RESOLUTION,
-  MAP_H3_RESOLUTIONS,
-} from "../../src/domain/map/grid";
-import { getMapCellCandidates } from "../../src/domain/map/hierarchy";
 import {
   detectMapColors,
   matchCountryColor,
@@ -25,6 +17,8 @@ import {
   addGameDuration,
   advanceTurnDeadline,
   formatAdjudicationCadence,
+  formatGameInstant,
+  currentGameInstant,
   judgmentEndsAt,
   nextTurnDeadline,
 } from "../../src/domain/turn/schedule";
@@ -65,6 +59,22 @@ describe("Phase 3 판정과 턴 안전장치", () => {
     expect(addGameDuration(new Date("2080-01-01T00:00:00.000Z"), 4, "MONTH").toISOString()).toBe(
       "2080-05-01T00:00:00.000Z",
     );
+  });
+  it("게임 시각은 마감 뒤에도 진행속도에 맞춰 초 단위로 흐른다", () => {
+    const input = {
+      gameDateStart: "2100-01-01",
+      gameDateEnd: "2100-01-01",
+      deadlineAt: new Date("2026-01-02T00:00:00.000Z"),
+      intervalRealDays: 1,
+    };
+    const atDeadline = currentGameInstant({ ...input, now: input.deadlineAt });
+    const halfSecondLater = currentGameInstant({
+      ...input,
+      now: new Date(input.deadlineAt.getTime() + 500),
+    });
+
+    expect(atDeadline && formatGameInstant(atDeadline)).toBe("2100.01.01 23:59:59");
+    expect(halfSecondLater && formatGameInstant(halfSecondLater)).toBe("2100.01.02 00:00:00");
   });
   it("효과 대상, 범위, 기간을 허용 목록으로 제한한다", () => {
     expect(
@@ -201,31 +211,6 @@ describe("Phase 5 지도", () => {
       value: "beta",
     });
     expect(matchCountryColor([255, 255, 255, 255], palette)).toEqual({ kind: "unmatched" });
-  });
-
-  it("전 세계 지도는 수십만 개 H3 셀을 사용한다", () => {
-    expect(getNumCells(GLOBAL_MAP_H3_RESOLUTION)).toBe(288_122);
-  });
-
-  it("지도 해상도 1~8을 지원하고 축소 단계에서는 가벼운 타일을 사용한다", () => {
-    expect(MAP_H3_RESOLUTIONS).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(getMapTileResolution(8, 0)).toBe(2);
-    expect(getMapTileResolution(8, 10)).toBe(8);
-    expect(getMapTileResolution(3, 9)).toBe(3);
-  });
-
-  it("세밀한 셀은 상위 영토를 상속하고 축소 셀은 기준 셀을 참조한다", () => {
-    const fineCell = latLngToCell(37.5665, 126.978, 8);
-    expect(getMapCellCandidates(fineCell)).toContain(cellToParent(fineCell, 4));
-
-    const overviewCell = latLngToCell(37.5665, 126.978, 2);
-    expect(getMapCellCandidates(overviewCell)).toContain(cellToCenterChild(overviewCell, 4));
-  });
-
-  it("fixed high-resolution tiles wait for a safe zoom level", () => {
-    expect(getMinimumSafeTileZoom(4)).toBe(4);
-    expect(getMinimumSafeTileZoom(6)).toBe(6);
-    expect(getMinimumSafeTileZoom(8)).toBe(9);
   });
 
   it("오래된 지도 리비전 저장을 거절한다", () => {

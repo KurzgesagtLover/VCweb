@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { BackgroundOst } from "@/src/ui/background-ost";
+import { UiClickSound } from "@/src/ui/ui-click-sound";
 import "./globals.css";
-import "maplibre-gl/dist/maplibre-gl.css";
 
 const anemoneAir = localFont({
   src: "../Cafe24OhsquareAir-v2.0.otf",
@@ -31,6 +31,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           본문으로 건너뛰기
         </a>
         <BackgroundOst />
+        <UiClickSound />
         {children}
       </body>
     </html>

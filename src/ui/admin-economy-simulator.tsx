@@ -3,9 +3,12 @@
 import Decimal from "decimal.js";
 import { useMemo, useState, type FormEvent } from "react";
 import type { EconomyInput, EconomyRules } from "@/src/domain/economy/calculator";
+import { metricLabel } from "@/src/domain/display-labels";
 import {
   defaultEconomyProjectionSettings,
   runEconomyProjection,
+  type DevelopmentStage,
+  type EconomyProjectionContext,
   type EconomyProjectionPoint,
 } from "@/src/domain/economy/simulator";
 
@@ -58,6 +61,28 @@ function formatValue(value: number, metric: MetricKey) {
 function formatDelta(value: number, unit = "%p") {
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}${unit}`;
+}
+
+const developmentLabels: Record<DevelopmentStage, string> = {
+  DEVELOPING: "개도국",
+  EMERGING: "신흥국",
+  ADVANCED: "선진국",
+};
+
+function formatGoalValue(metric: string, value: number) {
+  const percentMetrics = new Set([
+    "realGdpGrowth",
+    "inflationRate",
+    "unemploymentRate",
+    "incomeGini",
+    "wealthGini",
+    "debtToGdp",
+    "currentAccountToGdp",
+  ]);
+  const display = percentMetrics.has(metric) ? value * 100 : value;
+  return `${new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }).format(display)}${
+    percentMetrics.has(metric) ? "%" : ""
+  }`;
 }
 
 function metricDomain(
@@ -172,10 +197,12 @@ export function AdminEconomySimulator({
   countryName,
   initialInput,
   rules,
+  context,
 }: {
   countryName: string;
   initialInput: EconomyInput;
   rules: EconomyRules;
+  context: EconomyProjectionContext;
 }) {
   const defaults = useMemo(() => defaultEconomyProjectionSettings(initialInput), [initialInput]);
   const [settings, setSettings] = useState(defaults);
@@ -184,14 +211,16 @@ export function AdminEconomySimulator({
     () => ({ ...defaults, turns: settings.turns }),
     [defaults, settings.turns],
   );
-  const baseline = useMemo(
-    () => runEconomyProjection(initialInput, baselineSettings, rules).points,
+  const baselineProjection = useMemo(
+    () => runEconomyProjection(initialInput, baselineSettings, rules),
     [initialInput, baselineSettings, rules],
   );
-  const scenario = useMemo(
-    () => runEconomyProjection(initialInput, settings, rules).points,
-    [initialInput, settings, rules],
+  const scenarioProjection = useMemo(
+    () => runEconomyProjection(initialInput, settings, rules, context),
+    [context, initialInput, settings, rules],
   );
+  const baseline = baselineProjection.points;
+  const scenario = scenarioProjection.points;
   const baseFinal = baseline.at(-1)!;
   const scenarioFinal = scenario.at(-1)!;
   const realGdpGap = baseFinal.realGdp ? (scenarioFinal.realGdp / baseFinal.realGdp - 1) * 100 : 0;
@@ -201,7 +230,9 @@ export function AdminEconomySimulator({
     const form = new FormData(event.currentTarget);
     setSettings({
       turns: integerValue(form, "turns", defaults.turns),
-      taxRate: decimalPercent(form, "taxRate", defaults.taxRate),
+      incomeTaxRate: decimalPercent(form, "incomeTaxRate", defaults.incomeTaxRate),
+      corporateTaxRate: decimalPercent(form, "corporateTaxRate", defaults.corporateTaxRate),
+      otherTaxRate: decimalPercent(form, "otherTaxRate", defaults.otherTaxRate),
       governmentSpendingGrowth: decimalPercent(
         form,
         "governmentSpendingGrowth",
@@ -245,7 +276,16 @@ export function AdminEconomySimulator({
             <div className="form-grid">
               <label>
                 모의 기간
-                <input name="turns" type="number" min="1" max="100" defaultValue={defaults.turns} />
+                <input
+                  name="turns"
+                  type="number"
+                  min="1"
+                  max="200"
+                  value={settings.turns}
+                  onChange={(event) =>
+                    setSettings((current) => ({ ...current, turns: Number(event.target.value) }))
+                  }
+                />
               </label>
               <label>
                 충격 지속 기간
@@ -258,20 +298,54 @@ export function AdminEconomySimulator({
                 />
               </label>
             </div>
+            <div className="inline-actions" aria-label="빠른 모의 기간 선택">
+              {[5, 10, 20, 50, 100].map((turns) => (
+                <button
+                  type="button"
+                  className="button secondary"
+                  key={turns}
+                  onClick={() => setSettings((current) => ({ ...current, turns }))}
+                >
+                  {turns}턴
+                </button>
+              ))}
+            </div>
           </fieldset>
 
           <fieldset>
             <legend>재정·통화</legend>
             <div className="form-grid">
               <label>
-                세율
+                소득세율
                 <input
-                  name="taxRate"
+                  name="incomeTaxRate"
                   type="number"
                   min="0"
-                  max="100"
+                  max="75"
                   step="0.1"
-                  defaultValue={percentValue(defaults.taxRate)}
+                  defaultValue={percentValue(defaults.incomeTaxRate)}
+                />
+              </label>
+              <label>
+                법인세율
+                <input
+                  name="corporateTaxRate"
+                  type="number"
+                  min="0"
+                  max="75"
+                  step="0.1"
+                  defaultValue={percentValue(defaults.corporateTaxRate)}
+                />
+              </label>
+              <label>
+                기타세율
+                <input
+                  name="otherTaxRate"
+                  type="number"
+                  min="0"
+                  max="75"
+                  step="0.1"
+                  defaultValue={percentValue(defaults.otherTaxRate)}
                 />
               </label>
               <label>
@@ -404,6 +478,14 @@ export function AdminEconomySimulator({
         <div className="economy-simulator-results">
           <div className="simulation-summary">
             <article>
+              <span>경제 발전단계</span>
+              <strong>{developmentLabels[scenarioFinal.developmentStage]}</strong>
+              <small>
+                {scenario[0]?.developmentScore.toFixed(1)} →{" "}
+                {scenarioFinal.developmentScore.toFixed(1)}점
+              </small>
+            </article>
+            <article>
               <span>최종 성장률</span>
               <strong>{formatValue(scenarioFinal.realGdpGrowth, "realGdpGrowth")}</strong>
               <small>
@@ -442,6 +524,60 @@ export function AdminEconomySimulator({
             </label>
           </div>
           <ProjectionChart baseline={baseline} scenario={scenario} metric={metric} />
+
+          <section className="simulation-policy-result">
+            <div className="panel-head">
+              <div>
+                <span className="eyebrow">PLAN TRAJECTORY</span>
+                <h3>국가계획 이행 검증</h3>
+              </div>
+              <span className="status-pill">지속 효과 {context.modifiers?.length ?? 0}개</span>
+            </div>
+            {scenarioProjection.goalResults.length ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>계획</th>
+                      <th>지표</th>
+                      <th className="numeric">현재</th>
+                      <th className="numeric">목표</th>
+                      <th className="numeric">모의 결과</th>
+                      <th className="numeric">진척</th>
+                      <th>판정</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scenarioProjection.goalResults.map((goal) => (
+                      <tr key={goal.id}>
+                        <td>{goal.label}</td>
+                        <td>{metricLabel(goal.metric)}</td>
+                        <td className="numeric">
+                          {formatGoalValue(goal.metric, Number(goal.latestValue))}
+                        </td>
+                        <td className="numeric">
+                          {formatGoalValue(goal.metric, Number(goal.targetValue))}
+                        </td>
+                        <td className="numeric">
+                          {formatGoalValue(goal.metric, goal.projectedValue)}
+                        </td>
+                        <td className="numeric">{goal.progress.toFixed(1)}%</td>
+                        <td>
+                          {goal.status === "ACHIEVED"
+                            ? "달성"
+                            : goal.status === "ON_TRACK"
+                              ? "계획대로"
+                              : "이행 지연"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="empty-state">진행 중인 국가계획이 없습니다.</div>
+            )}
+          </section>
         </div>
       </div>
     </div>

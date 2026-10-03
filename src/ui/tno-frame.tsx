@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { CountryFlag } from "./country-flag";
 
 export type TnoWindowTab = { label: string; href: string; active: boolean };
 
@@ -64,7 +65,7 @@ export function TnoBanner({
   return (
     <div className="tno-nation-banner">
       <span className="tno-banner-flag" style={{ borderColor: color ?? "#4a5862" }}>
-        {flag}
+        <CountryFlag value={flag} name={name} />
       </span>
       <div className="tno-banner-text">
         <strong>{name}</strong>

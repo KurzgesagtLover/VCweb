@@ -1,0 +1,4 @@
+ALTER TABLE "company_class_financials" ADD COLUMN "automation_productivity_growth_rate" numeric(10, 7) DEFAULT '0' NOT NULL;--> statement-breakpoint
+ALTER TABLE "major_companies" ADD COLUMN "automation_productivity_growth_rate" numeric(10, 7) DEFAULT '0' NOT NULL;--> statement-breakpoint
+ALTER TABLE "company_class_financials" ADD CONSTRAINT "company_class_financials_automation_growth_check" CHECK ("company_class_financials"."automation_productivity_growth_rate" BETWEEN -1 AND 1);--> statement-breakpoint
+ALTER TABLE "major_companies" ADD CONSTRAINT "major_companies_automation_growth_check" CHECK ("major_companies"."automation_productivity_growth_rate" BETWEEN -1 AND 1);

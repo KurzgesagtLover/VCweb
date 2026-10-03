@@ -97,4 +97,16 @@ describe("pixel territory editing", () => {
     expect(cleaned[4]).not.toBe(0);
     expect(cleaned[8]).not.toBe(0);
   });
+
+  it("keeps black pixels when no border colors were classified", () => {
+    const data = raster([
+      [
+        [200, 20, 20, 255],
+        [0, 0, 0, 255],
+        [20, 20, 200, 255],
+      ],
+    ]);
+
+    expect(removeRasterBorders(data, 3, 1, [])).toEqual(data);
+  });
 });

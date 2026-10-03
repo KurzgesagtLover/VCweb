@@ -144,3 +144,42 @@ export function formatSeoulSchedule(date: Date) {
     hour12: false,
   }).format(date);
 }
+
+/** 턴 구간 안에서의 현재 게임시각 (월드 캘린더, 실제시각 아님). */
+export function currentGameInstant({
+  gameDateStart,
+  gameDateEnd,
+  deadlineAt,
+  intervalRealDays,
+  now = new Date(),
+}: {
+  gameDateStart: string;
+  gameDateEnd: string;
+  deadlineAt: Date | null;
+  intervalRealDays: number;
+  now?: Date;
+}) {
+  const start = Date.parse(`${gameDateStart}T00:00:00.000Z`);
+  const end = Date.parse(`${gameDateEnd}T23:59:59.999Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (!deadlineAt || !Number.isFinite(intervalRealDays) || intervalRealDays <= 0) {
+    return new Date(end);
+  }
+
+  const periodMs = intervalRealDays * REAL_DAY_MS;
+  const periodEnd = deadlineAt.getTime();
+  const periodStart = periodEnd - periodMs;
+  // 턴 마감 뒤에도 같은 세계관 진행속도로 연속해서 흐르게 한다.
+  const progress = (now.getTime() - periodStart) / periodMs;
+  return new Date(start + progress * (end - start));
+}
+
+export function formatGameInstant(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  const minute = String(date.getUTCMinutes()).padStart(2, "0");
+  const second = String(date.getUTCSeconds()).padStart(2, "0");
+  return `${year}.${month}.${day} ${hour}:${minute}:${second}`;
+}

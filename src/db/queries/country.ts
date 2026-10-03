@@ -3,7 +3,10 @@ import { db } from "@/src/db";
 import {
   adminChangeProposals,
   administrativeDivisions,
+  companyClassFinancials,
   countries,
+  companyScaleStatistics,
+  countryDevelopmentTracks,
   countryOffices,
   countryProfileRevisions,
   countryResearch,
@@ -14,14 +17,20 @@ import {
   economicSnapshots,
   financialInstitutions,
   majorCompanies,
+  modifiers,
   parties,
   partySnapshots,
   politicalSnapshots,
+  policyGoals,
   researchAllocations,
   techNodes,
   techPrerequisites,
   turns,
 } from "@/src/db/schema";
+import {
+  mergeDevelopmentTracks,
+  mergeSocialInstitutionTracks,
+} from "@/src/domain/development/tracks";
 
 function applyApprovedChanges<T extends Record<string, unknown>>(
   record: T | undefined,
@@ -47,7 +56,7 @@ export async function getCountryLedger(countryId: string) {
       })
     : undefined;
 
-  const [demographic, economicRows, politicalRows, divisions, offices, fiscalPolicy] =
+  const [demographic, economicRows, politicalRows, divisions, offices, fiscalPolicy, development] =
     await Promise.all([
       db
         .select({ snapshot: demographicSnapshots, turnSequence: turns.sequence })
@@ -96,10 +105,25 @@ export async function getCountryLedger(countryId: string) {
       db.query.countryFiscalPolicies.findFirst({
         where: eq(countryFiscalPolicies.countryId, countryId),
       }),
+      db.query.countryDevelopmentTracks.findMany({
+        where: eq(countryDevelopmentTracks.countryId, countryId),
+      }),
     ]);
 
   const currentEconomic = economicRows[0]?.snapshot;
   const currentPolitical = politicalRows[0]?.snapshot;
+  const [economicModifiers, activePolicyGoals] = await Promise.all([
+    db
+      .select({ modifier: modifiers, startTurnSequence: turns.sequence })
+      .from(modifiers)
+      .innerJoin(turns, eq(modifiers.startTurnId, turns.id))
+      .where(and(eq(modifiers.countryId, countryId), eq(modifiers.targetType, "COUNTRY")))
+      .orderBy(asc(turns.sequence), asc(modifiers.createdAt)),
+    db.query.policyGoals.findMany({
+      where: and(eq(policyGoals.countryId, countryId), eq(policyGoals.status, "ACTIVE")),
+      orderBy: [asc(policyGoals.targetGameDate), asc(policyGoals.createdAt)],
+    }),
+  ]);
   const changes =
     currentEconomic || currentPolitical
       ? await db.query.adminChangeProposals.findMany({
@@ -137,32 +161,40 @@ export async function getCountryLedger(countryId: string) {
         .orderBy(desc(partySnapshots.support))
     : [];
 
-  const [sectors, institutions, companies, economicInputs] = currentEconomic
-    ? await Promise.all([
-        db.query.economicSectors.findMany({
-          where: and(
-            eq(economicSectors.countryId, countryId),
-            eq(economicSectors.turnId, currentEconomic.turnId),
-          ),
-          orderBy: [desc(economicSectors.share), asc(economicSectors.name)],
-        }),
-        db.query.financialInstitutions.findMany({
-          where: eq(financialInstitutions.countryId, countryId),
-          orderBy: [
-            desc(financialInstitutions.systemicImportance),
-            asc(financialInstitutions.name),
-          ],
-        }),
-        db.query.majorCompanies.findMany({
-          where: eq(majorCompanies.countryId, countryId),
-          orderBy: [desc(majorCompanies.systemicImportance), asc(majorCompanies.name)],
-        }),
-        db.query.economicSnapshotInputs.findMany({
-          where: eq(economicSnapshotInputs.snapshotId, currentEconomic.id),
-          orderBy: [asc(economicSnapshotInputs.metric)],
-        }),
-      ])
-    : [[], [], [], []];
+  const [sectors, institutions, companies, economicInputs, companyScale, companyFinancials] =
+    currentEconomic
+      ? await Promise.all([
+          db.query.economicSectors.findMany({
+            where: and(
+              eq(economicSectors.countryId, countryId),
+              eq(economicSectors.turnId, currentEconomic.turnId),
+            ),
+            orderBy: [desc(economicSectors.share), asc(economicSectors.name)],
+          }),
+          db.query.financialInstitutions.findMany({
+            where: eq(financialInstitutions.countryId, countryId),
+            orderBy: [
+              desc(financialInstitutions.systemicImportance),
+              asc(financialInstitutions.name),
+            ],
+          }),
+          db.query.majorCompanies.findMany({
+            where: eq(majorCompanies.countryId, countryId),
+            orderBy: [desc(majorCompanies.systemicImportance), asc(majorCompanies.name)],
+          }),
+          db.query.economicSnapshotInputs.findMany({
+            where: eq(economicSnapshotInputs.snapshotId, currentEconomic.id),
+            orderBy: [asc(economicSnapshotInputs.metric)],
+          }),
+          db.query.companyScaleStatistics.findFirst({
+            where: eq(companyScaleStatistics.countryId, countryId),
+          }),
+          db.query.companyClassFinancials.findMany({
+            where: eq(companyClassFinancials.countryId, countryId),
+            orderBy: [asc(companyClassFinancials.companyClass)],
+          }),
+        ])
+      : [[], [], [], [], null, []];
 
   return {
     country,
@@ -184,8 +216,14 @@ export async function getCountryLedger(countryId: string) {
     sectors,
     institutions,
     companies,
+    companyScale,
+    companyFinancials,
     economicInputs,
     fiscalPolicy: fiscalPolicy ?? null,
+    developmentTracks: mergeDevelopmentTracks(development),
+    socialInstitutions: mergeSocialInstitutionTracks(development),
+    economicModifiers,
+    activePolicyGoals,
     approvedChanges: changes,
   };
 }

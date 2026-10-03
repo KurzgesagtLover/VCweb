@@ -3,6 +3,7 @@
 import Decimal from "decimal.js";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireRole, requireSession } from "@/src/auth/session";
 import { db } from "@/src/db";
@@ -12,12 +13,15 @@ import {
   chatChannelMembers,
   chatChannels,
   countries,
+  countryDevelopmentTracks,
+  countryPoliticalResources,
   countryApplications,
   countryAssignments,
   countryOffices,
   countryProfileRevisions,
   countrySetupSubmissions,
   demographicSnapshots,
+  economicSectors,
   economicSnapshots,
   governmentOfficeDefinitions,
   governmentOfficeHolders,
@@ -27,11 +31,16 @@ import {
 } from "@/src/db/schema";
 import { getActiveCampaign, getViewerContext } from "@/src/db/queries/viewer";
 import { deriveCountrySetup, quickCountrySetupSchema } from "@/src/domain/country/setup";
+import { defaultDevelopmentTrackRows } from "@/src/domain/development/tracks";
+import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
+import { standardEconomicSectorRows } from "@/src/domain/economy/sectors";
+import { deleteCountryFully } from "@/src/services/delete-country";
 import type { FormState } from "./auth";
 
 const applicationSchema = z.object({
-  requestedCountryName: z.string().trim().min(2).max(80),
-  reason: z.string().trim().min(10).max(1000),
+  countryId: z.string().uuid().nullable(),
+  kind: z.enum(["ASSIGN", "TRANSFER", "RELEASE"]),
+  reason: z.string().trim().max(1000),
 });
 
 const createCountrySchema = z.object({
@@ -73,6 +82,7 @@ export async function createCountryAction(formData: FormData) {
         setupStatus: "DRAFT",
       })
       .returning();
+    await tx.insert(countryDevelopmentTracks).values(defaultDevelopmentTrackRows(country.id));
     await tx.insert(auditLogs).values({
       campaignId: context.campaign!.id,
       actorId: session.user.id,
@@ -126,18 +136,27 @@ export async function applyForCountryAction(
   formData: FormData,
 ): Promise<FormState> {
   const session = await requireSession();
-  if (session.user.role !== "USER") {
-    return { error: "국가 배정 요청은 미배정 사용자만 보낼 수 있습니다." };
+  if (session.user.role === "ADMIN" || session.user.role === "MODERATOR") {
+    return { error: "운영진 계정은 국가를 신청할 수 없습니다." };
   }
   const input = applicationSchema.safeParse({
-    requestedCountryName: formData.get("requestedCountryName"),
-    reason: formData.get("reason"),
+    countryId: formData.get("countryId") || null,
+    kind: formData.get("kind") ?? "ASSIGN",
+    reason: formData.get("reason") ?? "",
   });
-  if (!input.success) return { error: "희망 국명과 10자 이상의 신청 사유를 입력해 주세요." };
+  if (!input.success) return { error: "신청 내용을 확인해 주세요." };
 
   const context = await getViewerContext(session.user.id);
   if (!context.campaign) return { error: "활성 캠페인이 없습니다." };
-  if (context.assignment) return { error: "이미 국가를 배정받았습니다." };
+
+  const kind = input.data.kind;
+  if (kind === "ASSIGN" && context.assignment) {
+    return { error: "이미 국가를 배정받았습니다. 국가 이적을 신청해 주세요." };
+  }
+  if (kind !== "ASSIGN" && !context.assignment) {
+    return { error: "배정된 국가가 없습니다." };
+  }
+
   const pending = await db.query.countryApplications.findFirst({
     where: and(
       eq(countryApplications.campaignId, context.campaign.id),
@@ -147,26 +166,59 @@ export async function applyForCountryAction(
   });
   if (pending) return { error: "이미 검토 중인 신청이 있습니다." };
 
+  let requestedCountryName = context.country?.name ?? "국가 반납";
+  if (kind !== "RELEASE") {
+    if (!input.data.countryId) return { error: "지도에서 국가를 선택해 주세요." };
+    if (input.data.countryId === context.assignment?.countryId) {
+      return { error: "이미 담당 중인 국가입니다." };
+    }
+    const target = await db.query.countries.findFirst({
+      where: and(
+        eq(countries.campaignId, context.campaign.id),
+        eq(countries.id, input.data.countryId),
+      ),
+    });
+    if (!target) return { error: "국가를 찾을 수 없습니다." };
+    if (target.isAi) return { error: "AI 국가는 신청할 수 없습니다." };
+    const owner = await db.query.countryAssignments.findFirst({
+      where: and(
+        eq(countryAssignments.countryId, target.id),
+        eq(countryAssignments.isActive, true),
+        isNull(countryAssignments.endTurnId),
+      ),
+    });
+    if (owner) return { error: "이미 다른 사용자가 담당 중인 국가입니다." };
+    requestedCountryName = target.name;
+  }
+
   await db.insert(countryApplications).values({
     campaignId: context.campaign.id,
     userId: session.user.id,
-    ...input.data,
+    requestedCountryName,
+    requestedCountryId: kind === "RELEASE" ? null : input.data.countryId,
+    kind,
+    reason: input.data.reason || "지도에서 국가 선택",
   });
   revalidatePath("/apply");
   revalidatePath("/admin/users");
-  return { success: "국가 배정 신청을 접수했습니다." };
+  return {
+    success:
+      kind === "RELEASE"
+        ? "국가 반납 신청을 접수했습니다. 관리자 승인 후 처리됩니다."
+        : "국가 신청을 접수했습니다. 관리자 승인 후 배정됩니다.",
+  };
 }
 
 const assignSchema = z.object({
   applicationId: z.string().uuid(),
-  countryId: z.string().uuid(),
+  countryId: z.string().uuid().nullable(),
 });
 
 export async function assignCountryAction(formData: FormData) {
   const session = await requireRole("ADMIN");
   const input = assignSchema.parse({
     applicationId: formData.get("applicationId"),
-    countryId: formData.get("countryId"),
+    countryId: formData.get("countryId") || null,
   });
   const application = await db.query.countryApplications.findFirst({
     where: and(
@@ -175,10 +227,11 @@ export async function assignCountryAction(formData: FormData) {
     ),
   });
   if (!application) throw new Error("검토 가능한 신청을 찾을 수 없습니다.");
-  const applicant = await db.query.users.findFirst({ where: eq(users.id, application.userId) });
-  if (!applicant || applicant.role !== "USER") {
-    throw new Error("미배정 사용자만 국가에 배정할 수 있습니다.");
-  }
+  const releasing = application.kind === "RELEASE";
+  const targetCountryId = releasing ? null : (input.countryId ?? application.requestedCountryId);
+  if (!releasing && !targetCountryId) throw new Error("배정할 국가를 선택해 주세요.");
+
+  const context = await getViewerContext(session.user.id);
 
   await db.transaction(async (tx) => {
     const existing = await tx.query.countryAssignments.findFirst({
@@ -189,39 +242,73 @@ export async function assignCountryAction(formData: FormData) {
         isNull(countryAssignments.endTurnId),
       ),
     });
-    const countryOwner = await tx.query.countryAssignments.findFirst({
-      where: and(
-        eq(countryAssignments.countryId, input.countryId),
-        eq(countryAssignments.isActive, true),
-        isNull(countryAssignments.endTurnId),
-      ),
-    });
-    if (existing || countryOwner) throw new Error("사용자 또는 국가가 이미 배정되어 있습니다.");
+    if (releasing && !existing) throw new Error("반납할 국가 배정이 없습니다.");
 
-    await tx.insert(countryAssignments).values({
-      campaignId: application.campaignId,
-      countryId: input.countryId,
-      userId: application.userId,
-    });
-    const countryChannel = await tx.query.chatChannels.findFirst({
-      where: and(
-        eq(chatChannels.campaignId, application.campaignId),
-        eq(chatChannels.countryId, input.countryId),
-      ),
-    });
-    if (countryChannel) {
+    // 이적·반납이면 기존 배정을 먼저 정리한다.
+    if (existing) {
       await tx
-        .insert(chatChannelMembers)
-        .values({ channelId: countryChannel.id, userId: application.userId })
-        .onConflictDoNothing();
+        .update(countryAssignments)
+        .set({ isActive: false, endTurnId: context.turn?.id, updatedAt: new Date() })
+        .where(eq(countryAssignments.id, existing.id));
+      const previousChannel = await tx.query.chatChannels.findFirst({
+        where: and(
+          eq(chatChannels.campaignId, application.campaignId),
+          eq(chatChannels.countryId, existing.countryId),
+        ),
+      });
+      if (previousChannel) {
+        await tx
+          .delete(chatChannelMembers)
+          .where(
+            and(
+              eq(chatChannelMembers.channelId, previousChannel.id),
+              eq(chatChannelMembers.userId, application.userId),
+            ),
+          );
+      }
     }
+
+    if (targetCountryId) {
+      const countryOwner = await tx.query.countryAssignments.findFirst({
+        where: and(
+          eq(countryAssignments.countryId, targetCountryId),
+          eq(countryAssignments.isActive, true),
+          isNull(countryAssignments.endTurnId),
+        ),
+      });
+      if (countryOwner) throw new Error("이미 다른 사용자에게 배정된 국가입니다.");
+      await tx.insert(countryAssignments).values({
+        campaignId: application.campaignId,
+        countryId: targetCountryId,
+        userId: application.userId,
+      });
+      const countryChannel = await tx.query.chatChannels.findFirst({
+        where: and(
+          eq(chatChannels.campaignId, application.campaignId),
+          eq(chatChannels.countryId, targetCountryId),
+        ),
+      });
+      if (countryChannel) {
+        await tx
+          .insert(chatChannelMembers)
+          .values({ channelId: countryChannel.id, userId: application.userId })
+          .onConflictDoNothing();
+      }
+    }
+
+    const nextRole = targetCountryId ? "PLAYER" : "USER";
     await tx
       .update(countryApplications)
-      .set({ status: "APPROVED", reviewedBy: session.user.id, reviewedAt: new Date() })
+      .set({
+        status: "APPROVED",
+        reviewedBy: session.user.id,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(eq(countryApplications.id, application.id));
     await tx
       .update(campaignMemberships)
-      .set({ role: "PLAYER", updatedAt: new Date() })
+      .set({ role: nextRole, updatedAt: new Date() })
       .where(
         and(
           eq(campaignMemberships.campaignId, application.campaignId),
@@ -230,20 +317,62 @@ export async function assignCountryAction(formData: FormData) {
       );
     await tx
       .update(users)
-      .set({ role: "PLAYER", updatedAt: new Date() })
+      .set({ role: nextRole, updatedAt: new Date() })
       .where(eq(users.id, application.userId));
     await tx.insert(auditLogs).values({
       campaignId: application.campaignId,
       actorId: session.user.id,
-      action: "ASSIGN_COUNTRY",
+      action: releasing ? "RELEASE_COUNTRY_ASSIGNMENT" : "ASSIGN_COUNTRY",
       targetType: "COUNTRY_ASSIGNMENT",
-      targetId: input.countryId,
-      afterSummary: { userId: application.userId, countryId: input.countryId },
-      reason: "국가 배정 신청 승인",
+      targetId: targetCountryId ?? existing?.countryId ?? application.userId,
+      beforeSummary: existing ? { countryId: existing.countryId } : undefined,
+      afterSummary: { userId: application.userId, countryId: targetCountryId },
+      reason: `국가 ${application.kind === "TRANSFER" ? "이적" : releasing ? "반납" : "배정"} 신청 승인`,
     });
   });
   revalidatePath("/admin/countries");
   revalidatePath("/admin/users");
+}
+
+export async function rejectCountryApplicationAction(formData: FormData) {
+  const session = await requireRole("ADMIN");
+  const input = z
+    .object({ applicationId: z.string().uuid(), reviewNote: z.string().trim().max(300) })
+    .parse({
+      applicationId: formData.get("applicationId"),
+      reviewNote: formData.get("reviewNote") ?? "",
+    });
+  const application = await db.query.countryApplications.findFirst({
+    where: and(
+      eq(countryApplications.id, input.applicationId),
+      eq(countryApplications.status, "PENDING"),
+    ),
+  });
+  if (!application) throw new Error("검토 가능한 신청을 찾을 수 없습니다.");
+  await db.transaction(async (tx) => {
+    await tx
+      .update(countryApplications)
+      .set({
+        status: "REJECTED",
+        reviewedBy: session.user.id,
+        reviewNote: input.reviewNote || null,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(countryApplications.id, application.id));
+    await tx.insert(auditLogs).values({
+      campaignId: application.campaignId,
+      actorId: session.user.id,
+      action: "REJECT_COUNTRY_APPLICATION",
+      targetType: "COUNTRY_APPLICATION",
+      targetId: application.id,
+      beforeSummary: { status: "PENDING", kind: application.kind },
+      afterSummary: { status: "REJECTED" },
+      reason: input.reviewNote || "국가 신청 반려",
+    });
+  });
+  revalidatePath("/admin/users");
+  revalidatePath("/apply");
 }
 
 export async function submitCountrySetupAction(
@@ -416,7 +545,7 @@ export async function approveCountrySetupAction(formData: FormData) {
       realGnp: realGdp.mul("1.005").toFixed(4),
       wealth: realGdp.mul("4.2").toFixed(4),
       foreignReserves: realGdp.mul("0.18").toFixed(4),
-      currencyCode: setup.currencyCode,
+      currencyCode: ECONOMY_STATISTICS_CURRENCY,
       currencyValue: setup.currencyValue,
       creditRating: "BBB",
       creditScore: 65,
@@ -434,10 +563,22 @@ export async function approveCountrySetupAction(formData: FormData) {
       policyRate: "0.03",
       currentAccountToGdp: "0.01",
       productivityIndex: "100",
+      povertyRate: "0.12",
+      agriculturalProductivityIndex: "100",
+      foodSelfSufficiency: "0.8",
+      industrialCapitalStockIndex: "100",
+      researchCapacityIndex: "100",
       referenceYear: new Date(baselineTurn.gameDateEnd).getUTCFullYear(),
       priceBasis: "constant",
       rulesVersion: campaign.rulesVersion,
     });
+    await tx.insert(economicSectors).values(
+      standardEconomicSectorRows().map((sector) => ({
+        countryId: submission.countryId,
+        turnId: baselineTurn.id,
+        ...sector,
+      })),
+    );
     await tx.insert(politicalSnapshots).values({
       countryId: submission.countryId,
       turnId: baselineTurn.id,
@@ -452,6 +593,12 @@ export async function approveCountrySetupAction(formData: FormData) {
       stateCapacity: 58,
       corruption: 35,
       democracy: 60,
+      politicalPower: "100",
+    });
+    await tx.insert(countryPoliticalResources).values({
+      countryId: submission.countryId,
+      balance: "100",
+      incomePerGameDay: "0.1",
     });
     await tx
       .update(countrySetupSubmissions)
@@ -507,4 +654,23 @@ export async function requestCountrySetupChangesAction(formData: FormData) {
       .where(eq(countries.id, submission.countryId));
   });
   revalidatePath("/admin/countries");
+}
+
+export async function deleteCountryAction(formData: FormData) {
+  const session = await requireRole("ADMIN");
+  const countryId = z.string().uuid().parse(formData.get("countryId"));
+  const country = await deleteCountryFully({
+    countryId,
+    actorId: session.user.id,
+    reason: "관리자 국가 삭제",
+  });
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/countries");
+  revalidatePath("/admin/users");
+  revalidatePath("/admin/economy");
+  revalidatePath("/admin/politics");
+  revalidatePath("/admin/map");
+  revalidatePath(`/admin/countries/${country.id}`);
+  redirect("/admin/countries");
 }

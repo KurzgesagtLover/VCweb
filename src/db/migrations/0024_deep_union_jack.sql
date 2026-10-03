@@ -1,0 +1,10 @@
+ALTER TABLE "country_fiscal_policies" ADD COLUMN "budget_preset" text DEFAULT 'BALANCED' NOT NULL;--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD COLUMN "budget_defense" integer DEFAULT 18 NOT NULL;--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD COLUMN "budget_administration" integer DEFAULT 15 NOT NULL;--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD COLUMN "budget_industry" integer DEFAULT 22 NOT NULL;--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD COLUMN "budget_education" integer DEFAULT 17 NOT NULL;--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD COLUMN "budget_welfare" integer DEFAULT 20 NOT NULL;--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD COLUMN "budget_diplomacy" integer DEFAULT 8 NOT NULL;--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD CONSTRAINT "country_fiscal_policy_budget_preset_check" CHECK ("country_fiscal_policies"."budget_preset" IN ('BALANCED', 'GROWTH_FIRST', 'WELFARE_STATE', 'STATE_DEVELOPMENT', 'NATIONAL_SECURITY', 'CIVIC_INVESTMENT'));--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD CONSTRAINT "country_fiscal_policy_budget_values_check" CHECK ("country_fiscal_policies"."budget_defense" BETWEEN 0 AND 100 AND "country_fiscal_policies"."budget_administration" BETWEEN 0 AND 100 AND "country_fiscal_policies"."budget_industry" BETWEEN 0 AND 100 AND "country_fiscal_policies"."budget_education" BETWEEN 0 AND 100 AND "country_fiscal_policies"."budget_welfare" BETWEEN 0 AND 100 AND "country_fiscal_policies"."budget_diplomacy" BETWEEN 0 AND 100);--> statement-breakpoint
+ALTER TABLE "country_fiscal_policies" ADD CONSTRAINT "country_fiscal_policy_budget_total_check" CHECK ("country_fiscal_policies"."budget_defense" + "country_fiscal_policies"."budget_administration" + "country_fiscal_policies"."budget_industry" + "country_fiscal_policies"."budget_education" + "country_fiscal_policies"."budget_welfare" + "country_fiscal_policies"."budget_diplomacy" = 100);

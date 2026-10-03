@@ -1,7 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import { updateCountryTaxRateAction } from "@/src/actions/economy";
+import { useState, type ReactNode } from "react";
+import { updateCountryBudgetAction, updateCountryTaxRateAction } from "@/src/actions/economy";
+import {
+  BUDGET_PRESETS,
+  BUDGET_SECTORS,
+  getBudgetSectorRange,
+  rebalanceBudgetAllocation,
+  type BudgetAllocation,
+  type BudgetPresetId,
+  type BudgetSectorKey,
+} from "@/src/domain/economy/budget";
+import { TAX_BASE_WEIGHTS } from "@/src/domain/economy/tax";
 
 export type EconomySnapshotView = {
   currency: string;
@@ -29,6 +39,11 @@ export type EconomySnapshotView = {
   wealthGini: number;
   currentAccountToGdp: number;
   productivityIndex: number;
+  povertyRate: number;
+  agriculturalProductivityIndex: number;
+  foodSelfSufficiency: number;
+  industrialCapitalStockIndex: number;
+  researchCapacityIndex: number;
   wealth: number;
   realGni: number;
   realGnp: number;
@@ -62,12 +77,108 @@ export type SectorView = {
   productivity: number;
 };
 
+export type CompanyView = {
+  id: string;
+  name: string;
+  logo: string;
+  slogan: string;
+  abbreviation: string | null;
+  founded: string;
+  history: string;
+  legalForm: string;
+  headquarters: string;
+  placeOfFoundation: string | null;
+  chiefExecutiveOfficer: string;
+  boardChair: string | null;
+  parentCompany: string;
+  largestShareholder: string | null;
+  majorShareholders: string[];
+  subsidiaries: string[];
+  affiliates: string[];
+  employeeCount: number;
+  indirectEmployment: number | null;
+  overseasEmployees: number | null;
+  averageSalary: number | null;
+  unionMembershipRate: number | null;
+  revenue: number;
+  grossProfit: number;
+  operatingProfit: number;
+  netIncome: number;
+  totalAssets: number;
+  totalDebt: number | null;
+  enterpriseValue: number;
+  marketCapitalization: number | null;
+  creditRating: string | null;
+  researchAndDevelopmentExpense: number | null;
+  capitalExpenditure: number | null;
+  cashAndEquivalents: number | null;
+  dividendsPaid: number | null;
+  debtRatio: number | null;
+  operatingMargin: number | null;
+  automationProductivityGrowthRate: number;
+  industry: string;
+  productsAndServices: string[];
+  brands: string[];
+  productionFacilities: string[];
+  researchFacilities: string[];
+  overseasBases: string[];
+  majorMarkets: string[];
+  competitors: string[];
+  isListed: boolean;
+  stockExchange: string | null;
+  tickerSymbol: string | null;
+  sharesOutstanding: number | null;
+  sharePrice: number | null;
+  dividendYield: number | null;
+  sizeIndex: number;
+  stateOwned: boolean;
+  systemicImportance: number;
+  health: number;
+};
+
+type CompanyClassStatisticsView = {
+  companyClass: "MAJOR" | "LARGE" | "MEDIUM" | "SMALL";
+  enterpriseCount: number;
+  totalRevenue: number;
+  totalGrossProfit: number;
+  totalOperatingProfit: number;
+  totalNetIncome: number;
+  totalAssets: number;
+  totalDebt: number;
+  totalEnterpriseValue: number;
+  totalEmployees: number;
+  totalResearchAndDevelopmentExpense: number;
+  totalCapitalExpenditure: number;
+  automationProductivityGrowthRate: number;
+};
+
+const COMPANY_CLASS_LABELS: Record<CompanyClassStatisticsView["companyClass"], string> = {
+  MAJOR: "주요 기업",
+  LARGE: "대기업",
+  MEDIUM: "중견기업",
+  SMALL: "중소기업",
+};
+
+const COMPANY_CLASS_METRICS = [
+  ["totalRevenue", "매출", "money"],
+  ["totalGrossProfit", "매출총이익", "money"],
+  ["totalOperatingProfit", "영업이익", "money"],
+  ["totalNetIncome", "순이익", "money"],
+  ["totalAssets", "총자산", "money"],
+  ["totalDebt", "총부채", "money"],
+  ["totalEnterpriseValue", "기업가치", "money"],
+  ["totalEmployees", "고용인원", "people"],
+  ["totalResearchAndDevelopmentExpense", "연구개발비", "money"],
+  ["totalCapitalExpenditure", "설비투자액", "money"],
+] as const;
+
 const SECTOR_COLORS = ["#f2c14b", "#4bb6f2", "#a97bf2", "#f2794b", "#4bf2a5", "#f24b7b", "#8fa0ab"];
 
 function compactMoney(millions: number, currency: string) {
   const abs = Math.abs(millions);
   if (abs >= 1_000_000) return `${(millions / 1_000_000).toFixed(2)}조 ${currency}`;
   if (abs >= 1_000) return `${(millions / 1_000).toFixed(2)}십억 ${currency}`;
+  if (abs > 0 && abs < 1) return `${(millions * 1_000).toFixed(1)}천 ${currency}`;
   return `${millions.toFixed(1)}백만 ${currency}`;
 }
 
@@ -79,6 +190,34 @@ function compactPeople(value: number) {
 
 function pct(value: number, digits = 2) {
   return `${(value * 100).toFixed(digits)}%`;
+}
+
+function plainNumber(value: number | null) {
+  return value === null ? "—" : value.toLocaleString("ko-KR");
+}
+
+function companyList(values: string[]) {
+  return values.length ? values.join(" · ") : "—";
+}
+
+function companyMoney(value: number | null, currency: string) {
+  return value === null ? "—" : compactMoney(value, currency);
+}
+
+function CompanyFacts({ title, items }: { title: string; items: Array<[string, ReactNode]> }) {
+  return (
+    <section className="tno-company-facts">
+      <h4>{title}</h4>
+      <dl>
+        {items.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value === null || value === undefined || value === "" ? "—" : value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
 }
 
 function ratingTone(score: number) {
@@ -219,8 +358,10 @@ export function TnoEconomyWindow({
   sectors,
   institutions,
   companies,
-  taxRatePercent,
+  companyClassStatistics,
+  taxRatesPercent,
   economicSystem,
+  budgetPolicy,
   perCapitaGdp,
   contributions,
 }: {
@@ -229,21 +370,47 @@ export function TnoEconomyWindow({
   demographic: DemographicView;
   sectors: SectorView[];
   institutions: Array<{ id: string; name: string; health: number; systemicImportance: number }>;
-  companies: Array<{
-    id: string;
-    name: string;
-    industry: string;
-    sizeIndex: number;
-    stateOwned: boolean;
-    health: number;
-  }>;
-  taxRatePercent: number;
+  companies: CompanyView[];
+  companyClassStatistics: CompanyClassStatisticsView[];
+  taxRatesPercent: {
+    incomeTaxRate: number;
+    corporateTaxRate: number;
+    otherTaxRate: number;
+  };
   economicSystem: string;
+  budgetPolicy: {
+    ideologyLabel: string;
+    allowedPresets: BudgetPresetId[];
+    preset: BudgetPresetId;
+    allocation: BudgetAllocation;
+  };
   perCapitaGdp: number | null;
   contributions: Array<{ group: string; items: Array<{ source: string; detail: string }> }>;
 }) {
   const [tab, setTab] = useState<"OVERVIEW" | "FISCAL" | "SOCIETY">("OVERVIEW");
-  const [taxRate, setTaxRate] = useState(taxRatePercent);
+  const [taxRates, setTaxRates] = useState(taxRatesPercent);
+  const [budgetPreset, setBudgetPreset] = useState<BudgetPresetId>(budgetPolicy.preset);
+  const [budgetAllocation, setBudgetAllocation] = useState<BudgetAllocation>(
+    budgetPolicy.allocation,
+  );
+  const effectiveTaxRate =
+    taxRates.incomeTaxRate * TAX_BASE_WEIGHTS.incomeTaxRate +
+    taxRates.corporateTaxRate * TAX_BASE_WEIGHTS.corporateTaxRate +
+    taxRates.otherTaxRate * TAX_BASE_WEIGHTS.otherTaxRate;
+
+  function selectBudgetPreset(preset: BudgetPresetId) {
+    setBudgetPreset(preset);
+    setBudgetAllocation({ ...BUDGET_PRESETS[preset].allocation });
+  }
+
+  function updateBudgetSector(key: BudgetSectorKey, value: number) {
+    setBudgetAllocation((current) => rebalanceBudgetAllocation(current, budgetPreset, key, value));
+  }
+
+  function resetBudgetPolicy() {
+    setBudgetPreset(budgetPolicy.preset);
+    setBudgetAllocation(budgetPolicy.allocation);
+  }
 
   if (!snapshot) {
     return (
@@ -354,9 +521,9 @@ export function TnoEconomyWindow({
           <div>
             <strong>{economicSystem === "PLANNED" ? "계획 경제" : "자유 시장 경제"}</strong>
             <div className="tno-econ-scale" aria-hidden="true">
-              <span style={{ left: `${Math.min(100, (taxRate / 75) * 100)}%` }} />
+              <span style={{ left: `${Math.min(100, (effectiveTaxRate / 75) * 100)}%` }} />
             </div>
-            <small>조세 부담 {taxRate.toFixed(1)}% / 최대 75%</small>
+            <small>실효 조세 부담 {effectiveTaxRate.toFixed(1)}%</small>
           </div>
         </div>
         <div className="tno-econ-counters">
@@ -612,20 +779,39 @@ export function TnoEconomyWindow({
               <form action={updateCountryTaxRateAction} className="tno-tax-panel">
                 <h3 className="tno-section-tab">조세 정책</h3>
                 <div className="tno-tax-readout">
-                  <strong>{taxRate.toFixed(1)}%</strong>
-                  <small>명목 GDP 대비 목표 조세 부담</small>
+                  <strong>{effectiveTaxRate.toFixed(1)}%</strong>
+                  <small>명목 GDP 대비 실효 조세 부담</small>
                 </div>
-                <input
-                  type="range"
-                  name="taxRate"
-                  min={0}
-                  max={75}
-                  step={0.1}
-                  value={taxRate}
-                  onChange={(event) => setTaxRate(Number(event.target.value))}
-                />
+                {(
+                  [
+                    ["incomeTaxRate", "소득세"],
+                    ["corporateTaxRate", "법인세"],
+                    ["otherTaxRate", "기타세"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label className="tno-tax-control" key={key}>
+                    <span>
+                      {label}
+                      <strong>{taxRates[key].toFixed(1)}%</strong>
+                    </span>
+                    <input
+                      type="range"
+                      name={key}
+                      min={0}
+                      max={75}
+                      step={0.1}
+                      value={taxRates[key]}
+                      onChange={(event) =>
+                        setTaxRates((current) => ({
+                          ...current,
+                          [key]: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                ))}
                 <div className="tno-tax-actions">
-                  <button type="button" onClick={() => setTaxRate(taxRatePercent)}>
+                  <button type="button" onClick={() => setTaxRates(taxRatesPercent)}>
                     초기화
                   </button>
                   <button type="submit">시행</button>
@@ -654,6 +840,78 @@ export function TnoEconomyWindow({
 
       {tab === "FISCAL" && (
         <div className="tno-econ-detail">
+          <form
+            action={updateCountryBudgetAction}
+            className="tno-plate tno-plate-wide tno-budget-allocation-panel"
+          >
+            <header className="tno-budget-allocation-head">
+              <h3>정부 예산 배분</h3>
+              <span>{budgetPolicy.ideologyLabel}</span>
+            </header>
+            <label className="tno-budget-preset-select">
+              <span>예산 프리셋</span>
+              <select
+                name="budgetPreset"
+                value={budgetPreset}
+                onChange={(event) => selectBudgetPreset(event.target.value as BudgetPresetId)}
+              >
+                {budgetPolicy.allowedPresets.map((presetId) => (
+                  <option key={presetId} value={presetId}>
+                    {BUDGET_PRESETS[presetId].label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="tno-budget-allocation-strip" aria-hidden="true">
+              {BUDGET_SECTORS.map((sector) => (
+                <i
+                  key={sector.key}
+                  style={{
+                    width: `${budgetAllocation[sector.key]}%`,
+                    background: sector.color,
+                  }}
+                />
+              ))}
+            </div>
+            <div className="tno-budget-sector-grid">
+              {BUDGET_SECTORS.map((sector) => {
+                const range = getBudgetSectorRange(budgetPreset, sector.key);
+                const share = budgetAllocation[sector.key];
+                return (
+                  <label className="tno-budget-sector-control" key={sector.key}>
+                    <span>
+                      <i style={{ background: sector.color }} />
+                      {sector.label}
+                    </span>
+                    <strong>
+                      {share}%
+                      <small>{compactMoney((snapshot.governmentSpending * share) / 100, "")}</small>
+                    </strong>
+                    <input
+                      type="range"
+                      name={sector.key}
+                      min={range.min}
+                      max={range.max}
+                      step={1}
+                      value={share}
+                      onChange={(event) =>
+                        updateBudgetSector(sector.key, Number(event.target.value))
+                      }
+                    />
+                  </label>
+                );
+              })}
+            </div>
+            <footer className="tno-budget-allocation-actions">
+              <span>총 100% · 프리셋 기준 각 부문 ±6%p</span>
+              <div>
+                <button type="button" onClick={resetBudgetPolicy}>
+                  초기화
+                </button>
+                <button type="submit">예산 시행</button>
+              </div>
+            </footer>
+          </form>
           <section className="tno-plate">
             <h3>재정</h3>
             <div className="tno-stat-grid">
@@ -726,6 +984,26 @@ export function TnoEconomyWindow({
                 <span>생산성</span>
                 <strong>{snapshot.productivityIndex.toFixed(1)}</strong>
               </div>
+              <div>
+                <span>빈곤율</span>
+                <strong>{pct(snapshot.povertyRate)}</strong>
+              </div>
+              <div>
+                <span>농업 생산성</span>
+                <strong>{snapshot.agriculturalProductivityIndex.toFixed(1)}</strong>
+              </div>
+              <div>
+                <span>식량 자급률</span>
+                <strong>{pct(snapshot.foodSelfSufficiency, 1)}</strong>
+              </div>
+              <div>
+                <span>산업 자본</span>
+                <strong>{snapshot.industrialCapitalStockIndex.toFixed(1)}</strong>
+              </div>
+              <div>
+                <span>연구 역량</span>
+                <strong>{snapshot.researchCapacityIndex.toFixed(1)}</strong>
+              </div>
             </div>
           </section>
           <section className="tno-plate">
@@ -788,6 +1066,10 @@ export function TnoEconomyWindow({
                   <strong>{pct(snapshot.unemploymentRate)}</strong>
                 </div>
                 <div>
+                  <span>빈곤율</span>
+                  <strong>{pct(snapshot.povertyRate)}</strong>
+                </div>
+                <div>
                   <span>1인당 GDP</span>
                   <strong>
                     {perCapitaGdp ? Math.round(perCapitaGdp).toLocaleString("ko-KR") : "—"}
@@ -844,20 +1126,192 @@ export function TnoEconomyWindow({
           </section>
 
           <section className="tno-plate">
+            <h3>기업 구조</h3>
+            <div className="tno-company-class-grid">
+              {companyClassStatistics.map((row) => (
+                <article key={row.companyClass}>
+                  <header>
+                    <strong>{COMPANY_CLASS_LABELS[row.companyClass]}</strong>
+                    <span>{row.enterpriseCount.toLocaleString("ko-KR")}개</span>
+                  </header>
+                  <div className="tno-company-automation">
+                    <span>자동화 생산성 증가율</span>
+                    <strong>{pct(row.automationProductivityGrowthRate, 1)} / 연</strong>
+                  </div>
+                  <dl>
+                    {COMPANY_CLASS_METRICS.map(([key, label, kind]) => {
+                      const total = row[key];
+                      const average = row.enterpriseCount > 0 ? total / row.enterpriseCount : 0;
+                      const formatValue = (value: number) =>
+                        kind === "people"
+                          ? `${Math.round(value).toLocaleString("ko-KR")}명`
+                          : compactMoney(value, currency);
+                      return (
+                        <div key={key}>
+                          <dt>{label}</dt>
+                          <dd>
+                            <span>총 {formatValue(total)}</span>
+                            <span>평균 {formatValue(average)}</span>
+                          </dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="tno-plate tno-company-directory">
             <h3>주요 기업</h3>
             {companies.length ? (
-              <ul className="tno-entity-list">
+              <div className="tno-company-list">
                 {companies.map((company) => (
-                  <li key={company.id}>
-                    <span>
-                      {company.name}
-                      {company.stateOwned && <i className="tno-state-owned">국영</i>}
-                    </span>
-                    <em>{company.industry}</em>
-                    <b>규모 {company.sizeIndex}</b>
-                  </li>
+                  <details className="tno-company-card" key={company.id}>
+                    <summary>
+                      <span className="tno-company-logo">
+                        {company.logo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={company.logo} alt={`${company.name} 로고`} />
+                        ) : (
+                          company.name.slice(0, 1)
+                        )}
+                      </span>
+                      <span className="tno-company-name">
+                        <strong>{company.name}</strong>
+                        <small>{company.abbreviation || company.slogan}</small>
+                      </span>
+                      <em>{company.industry}</em>
+                      <b>{company.stateOwned ? "국영" : company.legalForm || "민간"}</b>
+                    </summary>
+                    <div className="tno-company-profile">
+                      <header>
+                        <strong>{company.slogan || company.name}</strong>
+                        <span>
+                          규모 {company.sizeIndex} · 중요도 {company.systemicImportance} · 건전성{" "}
+                          {company.health}
+                        </span>
+                      </header>
+                      {company.history && <p className="tno-company-history">{company.history}</p>}
+                      <div className="tno-company-fact-grid">
+                        <CompanyFacts
+                          title="기본정보"
+                          items={[
+                            ["기업형태", company.legalForm],
+                            ["설립", company.founded],
+                            ["본사", company.headquarters],
+                            ["설립지", company.placeOfFoundation],
+                            ["최고경영자", company.chiefExecutiveOfficer],
+                            ["이사회 의장", company.boardChair],
+                            ["모기업", company.parentCompany],
+                            ["최대주주", company.largestShareholder],
+                            ["주요주주", companyList(company.majorShareholders)],
+                            ["주요 자회사", companyList(company.subsidiaries)],
+                            ["주요 계열사", companyList(company.affiliates)],
+                          ]}
+                        />
+                        <CompanyFacts
+                          title="인적환경"
+                          items={[
+                            ["직원 수", `${plainNumber(company.employeeCount)}명`],
+                            [
+                              "간접고용 인구",
+                              company.indirectEmployment === null
+                                ? "—"
+                                : `${plainNumber(company.indirectEmployment)}명`,
+                            ],
+                            [
+                              "해외근무 인원",
+                              company.overseasEmployees === null
+                                ? "—"
+                                : `${plainNumber(company.overseasEmployees)}명`,
+                            ],
+                            [
+                              "평균 연봉",
+                              company.averageSalary === null
+                                ? "—"
+                                : `${plainNumber(company.averageSalary)} ${currency}`,
+                            ],
+                            [
+                              "노조 가입률",
+                              company.unionMembershipRate === null
+                                ? "—"
+                                : pct(company.unionMembershipRate, 1),
+                            ],
+                          ]}
+                        />
+                        <CompanyFacts
+                          title="경제"
+                          items={[
+                            ["매출액", companyMoney(company.revenue, currency)],
+                            ["매출총이익", companyMoney(company.grossProfit, currency)],
+                            ["영업이익", companyMoney(company.operatingProfit, currency)],
+                            ["순이익", companyMoney(company.netIncome, currency)],
+                            ["총자산", companyMoney(company.totalAssets, currency)],
+                            ["총부채", companyMoney(company.totalDebt, currency)],
+                            ["기업가치", companyMoney(company.enterpriseValue, currency)],
+                            ["시가총액", companyMoney(company.marketCapitalization, currency)],
+                            ["신용등급", company.creditRating],
+                            [
+                              "연구개발비",
+                              companyMoney(company.researchAndDevelopmentExpense, currency),
+                            ],
+                            ["설비투자액", companyMoney(company.capitalExpenditure, currency)],
+                            ["현금성자산", companyMoney(company.cashAndEquivalents, currency)],
+                            ["배당액", companyMoney(company.dividendsPaid, currency)],
+                            [
+                              "부채비율",
+                              company.debtRatio === null ? "—" : pct(company.debtRatio, 1),
+                            ],
+                            [
+                              "영업이익률",
+                              company.operatingMargin === null
+                                ? "—"
+                                : pct(company.operatingMargin, 1),
+                            ],
+                            [
+                              "자동화 생산성 증가율",
+                              `${pct(company.automationProductivityGrowthRate, 1)} / 연`,
+                            ],
+                          ]}
+                        />
+                        <CompanyFacts
+                          title="사업"
+                          items={[
+                            ["주요 산업", company.industry],
+                            ["주요 제품·서비스", companyList(company.productsAndServices)],
+                            ["주요 브랜드", companyList(company.brands)],
+                            ["주요 생산시설", companyList(company.productionFacilities)],
+                            ["주요 연구시설", companyList(company.researchFacilities)],
+                            ["주요 해외거점", companyList(company.overseasBases)],
+                            ["주요 시장", companyList(company.majorMarkets)],
+                            ["주요 경쟁사", companyList(company.competitors)],
+                          ]}
+                        />
+                        <CompanyFacts
+                          title="주식"
+                          items={[
+                            ["상장 여부", company.isListed ? "상장" : "비상장"],
+                            ["상장 거래소", company.stockExchange],
+                            ["종목코드", company.tickerSymbol],
+                            ["발행주식수", plainNumber(company.sharesOutstanding)],
+                            [
+                              "주가",
+                              company.sharePrice === null
+                                ? "—"
+                                : `${plainNumber(company.sharePrice)} ${currency}`,
+                            ],
+                            [
+                              "배당수익률",
+                              company.dividendYield === null ? "—" : pct(company.dividendYield, 1),
+                            ],
+                          ]}
+                        />
+                      </div>
+                    </div>
+                  </details>
                 ))}
-              </ul>
+              </div>
             ) : (
               <p>등록된 기업이 없습니다.</p>
             )}
