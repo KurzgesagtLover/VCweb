@@ -12,6 +12,8 @@ import {
   type BudgetSectorKey,
 } from "@/src/domain/economy/budget";
 import { TAX_BASE_WEIGHTS } from "@/src/domain/economy/tax";
+import { administrationTier } from "@/src/domain/economy/administration";
+import { formatMonthlyDrift } from "@/src/domain/politics/drift";
 
 export type EconomySnapshotView = {
   currency: string;
@@ -364,6 +366,7 @@ export function TnoEconomyWindow({
   budgetPolicy,
   perCapitaGdp,
   contributions,
+  administration = null,
 }: {
   snapshot: EconomySnapshotView | null;
   trend: EconomyTrendPointView[];
@@ -386,6 +389,11 @@ export function TnoEconomyWindow({
   };
   perCapitaGdp: number | null;
   contributions: Array<{ group: string; items: Array<{ source: string; detail: string }> }>;
+  administration?: {
+    requiredGdpShare: string;
+    requiredBudgetShare: string | null;
+    spendingToGdp: string;
+  } | null;
 }) {
   const [tab, setTab] = useState<"OVERVIEW" | "FISCAL" | "SOCIETY">("OVERVIEW");
   const [taxRates, setTaxRates] = useState(taxRatesPercent);
@@ -397,6 +405,32 @@ export function TnoEconomyWindow({
     taxRates.incomeTaxRate * TAX_BASE_WEIGHTS.incomeTaxRate +
     taxRates.corporateTaxRate * TAX_BASE_WEIGHTS.corporateTaxRate +
     taxRates.otherTaxRate * TAX_BASE_WEIGHTS.otherTaxRate;
+
+  const administrationCoverage =
+    administration && Number(administration.requiredBudgetShare) > 0
+      ? budgetAllocation.budgetAdministration / 100 / Number(administration.requiredBudgetShare)
+      : null;
+  const administrationState = administrationTier(administrationCoverage);
+  const administrationEffects = [
+    ...formatMonthlyDrift(administrationState.drift),
+    ...(Number(administrationState.revenueEfficiency)
+      ? [
+          `세수 효율 ${Number(administrationState.revenueEfficiency) > 0 ? "+" : ""}${(
+            Number(administrationState.revenueEfficiency) * 100
+          ).toFixed(1)}%`,
+        ]
+      : []),
+    ...(Number(administrationState.potentialGrowth)
+      ? [`잠재성장률 ${(Number(administrationState.potentialGrowth) * 100).toFixed(1)}%p`]
+      : []),
+    ...(administrationState.politicalPowerIncome
+      ? [
+          `정치력 수입 연 ${administrationState.politicalPowerIncome > 0 ? "+" : ""}${
+            administrationState.politicalPowerIncome
+          }`,
+        ]
+      : []),
+  ];
 
   function selectBudgetPreset(preset: BudgetPresetId) {
     setBudgetPreset(preset);
@@ -902,6 +936,35 @@ export function TnoEconomyWindow({
                 );
               })}
             </div>
+            {administration ? (
+              <section className="tno-admin-coverage" aria-live="polite">
+                <header>
+                  <h4>행정·치안 충족률</h4>
+                  <strong className={`tier-${administrationState.key.toLowerCase()}`}>
+                    {administrationCoverage === null
+                      ? "—"
+                      : `${Math.round(administrationCoverage * 100)}%`}
+                  </strong>
+                  <span>{administrationState.label}</span>
+                </header>
+                <p>
+                  필요 비중{" "}
+                  {administration.requiredBudgetShare
+                    ? `${(Number(administration.requiredBudgetShare) * 100).toFixed(1)}%`
+                    : "—"}{" "}
+                  (GDP 대비 {(Number(administration.requiredGdpShare) * 100).toFixed(2)}%) · 배정{" "}
+                  {budgetAllocation.budgetAdministration}%
+                </p>
+                <div className="tno-tag-row">
+                  {administrationEffects.length ? (
+                    administrationEffects.map((line) => <span key={line}>{line}</span>)
+                  ) : (
+                    <span>추가 효과 없음</span>
+                  )}
+                </div>
+                <small>{administrationState.description}</small>
+              </section>
+            ) : null}
             <footer className="tno-budget-allocation-actions">
               <span>총 100% · 프리셋 기준 각 부문 ±6%p</span>
               <div>

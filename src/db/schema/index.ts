@@ -5,6 +5,7 @@ export * from "./construction";
 export * from "./country";
 export * from "./enums";
 export * from "./gameplay";
+export * from "./laws";
 export * from "./operations";
 export * from "./research";
 export * from "./simulation";

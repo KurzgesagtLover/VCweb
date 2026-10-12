@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { updateCountryEconomicSystemAction } from "@/src/actions/country";
 import { adjustCountryDevelopmentAction } from "@/src/actions/development";
+import { setCountryLawStageAction } from "@/src/actions/laws";
 import {
   createAdministrativeDivisionAction,
   reviewAdministrativeDivisionRequestAction,
@@ -11,6 +12,8 @@ import { db } from "@/src/db";
 import { administrativeDivisionRequests } from "@/src/db/schema";
 import { getCountryLedger } from "@/src/db/queries/country";
 import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
+import { LAW_CATEGORY_LABELS, LAW_DEFINITIONS } from "@/src/domain/politics/laws";
+import { getCountryLawStages } from "@/src/services/laws";
 import { DeleteCountryButton } from "@/src/ui/delete-country-button";
 import { DevelopmentTrackGrid } from "@/src/ui/development-tracks";
 import { RememberedDisclosure } from "@/src/ui/disclosure";
@@ -31,6 +34,7 @@ export default async function AdminCountryDetail({
     where: eq(administrativeDivisionRequests.countryId, countryId),
     orderBy: [desc(administrativeDivisionRequests.createdAt)],
   });
+  const lawStages = await getCountryLawStages(db, ledger.country);
   const adm1Divisions = ledger.divisions.filter((division) => division.level === 1);
   const adm2Count = ledger.divisions.filter((division) => division.level === 2).length;
   return (
@@ -95,6 +99,58 @@ export default async function AdminCountryDetail({
             <button type="submit">적용</button>
           </div>
         </form>
+      </section>
+      <section className="panel settings-panel">
+        <div className="panel-head">
+          <h2>법·제도</h2>
+          <span className="status-pill">경제법은 국가 운영 유형과 연동</span>
+        </div>
+        <div className="division-list">
+          {LAW_DEFINITIONS.map((definition) => (
+            <div key={definition.key}>
+              <strong>{definition.label}</strong>
+              <span>
+                {definition.stages[lawStages[definition.key] - 1]?.label} (
+                {lawStages[definition.key]}/{definition.stages.length})
+              </span>
+            </div>
+          ))}
+        </div>
+        <form action={setCountryLawStageAction} className="form-grid">
+          <input type="hidden" name="countryId" value={countryId} />
+          <label>
+            법·제도 단계
+            <select name="lawStage" required defaultValue="">
+              <option value="" disabled>
+                선택
+              </option>
+              {LAW_DEFINITIONS.map((definition) => (
+                <optgroup
+                  key={definition.key}
+                  label={`${LAW_CATEGORY_LABELS[definition.category]} · ${definition.label}`}
+                >
+                  {definition.stages.map((stage, index) => (
+                    <option key={stage.label} value={`${definition.key}:${index + 1}`}>
+                      {index + 1}. {stage.label}
+                      {index + 1 === lawStages[definition.key] ? " (현재)" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <label>
+            사유
+            <input name="reason" required minLength={3} maxLength={1000} />
+          </label>
+          <div className="inline-actions">
+            <button type="submit">적용</button>
+          </div>
+        </form>
+        <p className="muted">
+          관리자 변경은 정치력을 쓰지 않습니다. 시행을 기다리던 플레이어 변경은 환불하고 취소하며,
+          적응 중이던 사회·문화 변경의 유지비도 끝납니다.
+        </p>
       </section>
       <RememberedDisclosure storageKey={`admin-country-${countryId}`} title="전체 원장 보기">
         <DataList

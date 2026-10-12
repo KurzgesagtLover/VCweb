@@ -142,7 +142,20 @@ export const DEFAULT_ECONOMY_RULES: EconomyRules = {
   },
 };
 
-type Contribution = { source: keyof EconomyInput; value: string; explanation: string };
+/** 법·제도와 예산 상태가 경제 계산에 거는 구조 보정. 매 턴 같은 값이 걸리며 누적되지 않는다. */
+export type EconomyStructuralAdjustments = {
+  /** 잠재성장률 보정(비율) */
+  potentialGrowth?: Decimal.Value;
+  /** 균형 실업률 이동(비율) */
+  naturalUnemployment?: Decimal.Value;
+  /** 물가 형성 압력(비율) */
+  inflationPressure?: Decimal.Value;
+  /** 세수 효율 보정(비율) */
+  revenueEfficiency?: Decimal.Value;
+};
+
+type ContributionSource = keyof EconomyInput | "policyStructure";
+type Contribution = { source: ContributionSource; value: string; explanation: string };
 
 const d = (value: Decimal.Value) => new Decimal(value);
 const clamp = (value: Decimal, min: Decimal.Value, max: Decimal.Value) =>
@@ -176,11 +189,15 @@ export function creditRatingFromScore(score: Decimal.Value) {
   return "CCC";
 }
 
-function c(source: keyof EconomyInput, value: Decimal, explanation: string): Contribution {
+function c(source: ContributionSource, value: Decimal, explanation: string): Contribution {
   return { source, value: value.toSignificantDigits(12).toString(), explanation };
 }
 
-export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RULES) {
+export function calculateEconomy(
+  input: EconomyInput,
+  rules = DEFAULT_ECONOMY_RULES,
+  structural: EconomyStructuralAdjustments = {},
+) {
   const x = Object.fromEntries(ECONOMIC_INPUT_PATHS.map((key) => [key, d(input[key])])) as Record<
     keyof EconomyInput,
     Decimal
@@ -290,6 +307,12 @@ export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RU
     ),
     c("productivityIndex", productivityEducationSynergy, "생산성과 교육 수준의 보완 효과"),
   ];
+  const structuralPotential = d(structural.potentialGrowth ?? 0);
+  if (!structuralPotential.isZero()) {
+    potentialContributions.push(
+      c("policyStructure", structuralPotential, "법·제도·예산 상태의 구조적 성장 효과"),
+    );
+  }
   const rawPotentialGrowth = potentialContributions.reduce(
     (sum, item) => sum.plus(item.value),
     d(0),
@@ -415,6 +438,12 @@ export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RU
     ),
     c("externalShock", x.externalShock.mul("0.22"), "공급 충격"),
   ];
+  const structuralInflation = d(structural.inflationPressure ?? 0);
+  if (!structuralInflation.isZero()) {
+    inflationContributions.push(
+      c("policyStructure", structuralInflation, "법·제도에 따른 물가 압력"),
+    );
+  }
   const rawNextInflation = inflationContributions.reduce(
     (sum, item) => sum.plus(item.value),
     outputGap.mul("0.35"),
@@ -426,8 +455,16 @@ export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RU
   );
   const nextDeflator = Decimal.max("0.01", d(1).plus(nextInflation));
   const nextNominalGdp = nextRealGdp.mul(nextDeflator);
+  const naturalUnemployment = clamp(
+    d("0.05").plus(structural.naturalUnemployment ?? 0),
+    "0.01",
+    "0.3",
+  );
   const nextUnemployment = clamp(
-    x.unemploymentRate.mul("0.82").plus(d("0.05").mul("0.18")).minus(outputGap.mul("0.35")),
+    x.unemploymentRate
+      .mul("0.82")
+      .plus(naturalUnemployment.mul("0.18"))
+      .minus(outputGap.mul("0.35")),
     "0.015",
     "0.6",
   );
@@ -445,9 +482,11 @@ export function calculateEconomy(input: EconomyInput, rules = DEFAULT_ECONOMY_RU
   );
 
   const effectiveTaxRate = x.nominalGdp.isZero() ? d(0) : x.governmentRevenue.div(x.nominalGdp);
+  const revenueEfficiency = clamp(d(structural.revenueEfficiency ?? 0), "-0.5", "0.5");
   const nextRevenue = nextNominalGdp
     .mul(effectiveTaxRate)
-    .mul(d(1).plus(x.stateCapacity.minus(50).div(5000)));
+    .mul(d(1).plus(x.stateCapacity.minus(50).div(5000)))
+    .mul(d(1).plus(revenueEfficiency));
   const nextSpending = x.governmentSpending.mul(d(1).plus(spendingGrowth));
   const fiscalBalance = nextRevenue.minus(nextSpending);
   const sovereignRiskSpread = d(100).minus(x.creditScore).div(100).mul("0.04");

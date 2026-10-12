@@ -10812,3 +10812,255 @@ body:has(.globe-stage) .sidebar {
     padding: 1.2rem 0.8rem 3rem;
   }
 }
+
+/* 법·제도와 정치력 수지 */
+.law-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: 0.45rem;
+}
+.law-card {
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border: 1px solid #29343a;
+  background: #080c0e;
+}
+.law-card > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.law-card > header span {
+  color: #d8e3e7;
+  font-size: 0.78rem;
+}
+.law-card > header strong {
+  color: #8b979d;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+}
+.law-ladder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.law-ladder li {
+  padding: 0.12rem 0.3rem;
+  border: 1px solid #26323a;
+  color: #66757c;
+  font-size: 0.62rem;
+}
+.law-ladder li.current {
+  border-color: var(--tno-cyan);
+  background: color-mix(in srgb, var(--tno-cyan) 14%, #05080a);
+  color: #e6fbfb;
+}
+.law-ladder li.pending {
+  border-color: #d8c579;
+  border-style: dashed;
+  color: #d8c579;
+}
+.law-description,
+.law-note {
+  margin: 0;
+  color: #a9b4b9;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+.law-note {
+  margin-top: 0.4rem;
+  color: #79848a;
+}
+.law-effects span {
+  font-size: 0.6rem;
+}
+.law-adaptation {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid #2c3a40;
+  background: #05080a;
+  font-size: 0.66rem;
+}
+.law-adaptation > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  color: #b8c3c8;
+}
+.law-adaptation b {
+  color: #ff9aa3;
+  font-family: var(--mono);
+  font-weight: 400;
+}
+.law-adaptation-meter {
+  height: 0.35rem;
+  border: 1px solid #34434a;
+  background: #030607;
+}
+.law-adaptation-meter i {
+  display: block;
+  height: 100%;
+  background: #4bf2a5;
+}
+.law-erosion {
+  color: #f2a25a;
+  font-size: 0.62rem;
+}
+.law-pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem;
+  border: 1px dashed #d8c579;
+  color: #d8c579;
+  font-size: 0.66rem;
+}
+.law-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.law-actions form {
+  flex: 1 1 7.5rem;
+}
+.law-actions button,
+.law-pending button {
+  display: grid;
+  width: 100%;
+  gap: 0.05rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0;
+  font-size: 0.68rem;
+}
+.law-pending button {
+  width: auto;
+}
+.law-actions button small {
+  color: #8b979d;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+}
+.law-actions button.law-up {
+  text-align: right;
+}
+.law-actions button.law-down {
+  text-align: left;
+}
+.law-blocked {
+  flex-basis: 100%;
+  color: #79848a;
+  font-size: 0.6rem;
+}
+.law-breakdown {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+}
+.law-breakdown > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.18rem 0;
+  border-bottom: 1px solid var(--tno-line-soft);
+  font-size: 0.72rem;
+}
+.law-breakdown dt {
+  color: #a4b0b6;
+}
+.law-breakdown dt small {
+  color: #66757c;
+}
+.law-breakdown dd {
+  margin: 0;
+  color: #e6edef;
+  font-family: var(--mono);
+}
+.law-ledger {
+  display: grid;
+  gap: 1px;
+  background: var(--tno-line-soft);
+  padding: 1px;
+}
+.law-ledger > div {
+  display: grid;
+  grid-template-columns: 3rem repeat(4, minmax(0, 1fr)) 4.5rem;
+  gap: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  background: #070a0c;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+}
+.law-ledger b {
+  color: var(--tno-cyan);
+}
+.law-ledger .good {
+  color: #7ff0b4;
+}
+.law-ledger .bad {
+  color: #ff9aa3;
+}
+.law-ledger em {
+  color: #8b979d;
+  font-style: normal;
+  text-align: right;
+}
+@media (max-width: 700px) {
+  .law-ledger > div {
+    grid-template-columns: 2.6rem repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 행정·치안 예산 충족률 */
+.tno-admin-coverage {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--tno-line-soft);
+  background: #05080a;
+}
+.tno-admin-coverage header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.tno-admin-coverage h4 {
+  margin: 0;
+  color: var(--tno-cyan);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+.tno-admin-coverage header strong {
+  font-family: var(--mono);
+  font-size: 1rem;
+}
+.tno-admin-coverage header span {
+  color: #d8c579;
+  font-size: 0.72rem;
+}
+.tno-admin-coverage p,
+.tno-admin-coverage small {
+  margin: 0;
+  color: #a4b0b6;
+  font-size: 0.66rem;
+}
+.tno-admin-coverage .tier-paralysis,
+.tno-admin-coverage .tier-gap {
+  color: #ff9aa3;
+}
+.tno-admin-coverage .tier-normal {
+  color: #e6edef;
+}
+.tno-admin-coverage .tier-expansion {
+  color: #7ff0b4;
+}
+.tno-admin-coverage .tier-bloat {
+  color: #f2c14b;
+}

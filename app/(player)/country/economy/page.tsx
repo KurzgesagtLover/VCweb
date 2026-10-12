@@ -1,4 +1,5 @@
 import { requireSession } from "@/src/auth/session";
+import { db } from "@/src/db";
 import { getCountryLedger } from "@/src/db/queries/country";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { contributionGroupLabel, metricLabel } from "@/src/domain/display-labels";
@@ -11,6 +12,7 @@ import {
 } from "@/src/domain/economy/budget";
 import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
 import { buildCompanyClassStatistics } from "@/src/domain/economy/company";
+import { evaluateCountryAdministration } from "@/src/services/laws";
 import { TnoEconomyWindow } from "@/src/ui/tno-economy-window";
 
 export const metadata = { title: "경제" };
@@ -19,7 +21,10 @@ export default async function EconomyPage() {
   const session = await requireSession();
   const context = await getViewerContext(session.user.id);
   if (!context.country) return null;
-  const ledger = await getCountryLedger(context.country.id);
+  const [ledger, administration] = await Promise.all([
+    getCountryLedger(context.country.id),
+    evaluateCountryAdministration(db, context.country.id),
+  ]);
   if (!ledger) return null;
 
   const economic = ledger.economic;
@@ -256,6 +261,15 @@ export default async function EconomyPage() {
         allocation: budgetAllocation,
       }}
       perCapitaGdp={perCapitaGdp}
+      administration={
+        administration
+          ? {
+              requiredGdpShare: administration.requirement.gdpShare,
+              requiredBudgetShare: administration.requirement.budgetShare,
+              spendingToGdp: administration.spendingToGdp,
+            }
+          : null
+      }
       contributions={Object.entries(economic?.contributions ?? {}).map(([group, items]) => ({
         group: contributionGroupLabel(group),
         items: items.map((item) => ({

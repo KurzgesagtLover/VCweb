@@ -19,7 +19,7 @@ export function PoliticalPowerTicker({
     const startedAt = Date.parse(serverNow);
     const update = () => {
       const elapsedSeconds = Math.max(0, Date.now() - startedAt) / 1000;
-      setValue(Math.min(1000, Math.max(0, base + rate * elapsedSeconds)));
+      setValue(Math.min(1000, Math.max(-250, base + rate * elapsedSeconds)));
     };
     update();
     const timer = window.setInterval(update, 250);

@@ -4,6 +4,7 @@ import { getCountryLedger } from "@/src/db/queries/country";
 import { getGovernmentStructure } from "@/src/db/queries/government";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { governmentBranchLabel, metricLabel } from "@/src/domain/display-labels";
+import { getLawBoard } from "@/src/services/laws";
 import { getPoliticalPowerState } from "@/src/services/political-power";
 import { formatMoney, formatPercent } from "@/src/ui/format";
 import {
@@ -20,13 +21,15 @@ import {
   TnoTrend,
   TnoWindow,
 } from "@/src/ui/tno-frame";
+import { PoliticalLawsView } from "@/src/ui/political-laws-view";
 import { PoliticalPowerTicker } from "@/src/ui/political-power-ticker";
 
 export const metadata = { title: "정치" };
 
-type PoliticsTab = "overview" | "personnel" | "assembly" | "replace";
+type PoliticsTab = "overview" | "laws" | "personnel" | "assembly" | "replace";
 const TABS: Array<[PoliticsTab, string]> = [
   ["overview", "정치 현황"],
+  ["laws", "법·제도"],
   ["personnel", "권력기관 인사"],
   ["assembly", "국회·정당"],
   ["replace", "인사 교체"],
@@ -285,7 +288,9 @@ function OverviewView({
         <TnoHeadline
           label="정치력"
           value={<PoliticalPowerTicker {...politicalPower} />}
-          meta={`+${Number(politicalPower.incomePerGameDay).toFixed(2)} / 게임일`}
+          meta={`연 순증 ${Number(politicalPower.incomePerGameDay) >= 0 ? "+" : ""}${(
+            Number(politicalPower.incomePerGameDay) * 365
+          ).toFixed(1)}`}
           tone={Number(politicalPower.balance) < 25 ? "bad" : "good"}
         />
       </div>
@@ -375,6 +380,14 @@ export default async function PoliticsPage({
   ]);
   if (!ledger) return null;
   const politics = ledger.political;
+  const lawBoard =
+    activeTab === "laws"
+      ? await getLawBoard({
+          campaign: context.campaign,
+          country: context.country,
+          turn: context.turn,
+        })
+      : null;
 
   return (
     <TnoWindow
@@ -405,6 +418,7 @@ export default async function PoliticsPage({
       />
 
       {activeTab === "overview" && <OverviewView ledger={ledger} politicalPower={politicalPower} />}
+      {activeTab === "laws" && lawBoard && <PoliticalLawsView board={lawBoard} />}
       {activeTab === "personnel" && <PersonnelView structure={structure} />}
       {activeTab === "assembly" && <AssemblyView ledger={ledger} />}
       {activeTab === "replace" && (

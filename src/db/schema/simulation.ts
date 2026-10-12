@@ -510,7 +510,7 @@ export const politicalSnapshots = pgTable(
       "political_metrics_check",
       sql`${table.stability} BETWEEN 0 AND 100 AND ${table.legitimacy} BETWEEN 0 AND 100 AND ${table.governmentApproval} BETWEEN 0 AND 100 AND ${table.policySupport} BETWEEN 0 AND 100 AND ${table.unrest} BETWEEN 0 AND 100 AND ${table.stateCapacity} BETWEEN 0 AND 100 AND ${table.corruption} BETWEEN 0 AND 100 AND ${table.democracy} BETWEEN 0 AND 100`,
     ),
-    check("political_power_check", sql`${table.politicalPower} BETWEEN 0 AND 1000`),
+    check("political_power_check", sql`${table.politicalPower} BETWEEN -250 AND 1000`),
   ],
 );
 
@@ -530,7 +530,7 @@ export const countryPoliticalResources = pgTable(
     ...auditColumns,
   },
   (table) => [
-    check("political_resource_balance_check", sql`${table.balance} BETWEEN 0 AND 1000`),
+    check("political_resource_balance_check", sql`${table.balance} BETWEEN -250 AND 1000`),
     check("political_resource_income_check", sql`${table.incomePerGameDay} BETWEEN -10 AND 10`),
   ],
 );

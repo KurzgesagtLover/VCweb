@@ -5,6 +5,7 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { syncEconomyLawWithSystem } from "@/src/services/laws";
 import { requireRole, requireSession } from "@/src/auth/session";
 import { db } from "@/src/db";
 import {
@@ -116,6 +117,7 @@ export async function updateCountryEconomicSystemAction(formData: FormData) {
       .update(countries)
       .set({ economicSystem, updatedAt: new Date() })
       .where(eq(countries.id, countryId));
+    await syncEconomyLawWithSystem(tx, countryId, economicSystem);
     await tx.insert(auditLogs).values({
       campaignId: country.campaignId,
       actorId: session.user.id,

@@ -45,12 +45,14 @@ import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
 import { calculateTaxRevenue } from "@/src/domain/economy/tax";
 import { validateEffects } from "@/src/domain/effects/registry";
 import { isPolicyMetric, metricValue } from "@/src/domain/policy/metrics";
+import { applyMonthlyDrifts } from "@/src/domain/politics/drift";
 import {
   calculatePolicyEffectiveness,
   calculatePoliticalState,
   initialPolicyReception,
   type EconomicSystem,
 } from "@/src/domain/policy/model";
+import { calculationSystemsEvidence, loadCalculationSystems } from "@/src/services/laws";
 
 type JobRow = {
   id: string;
@@ -381,7 +383,21 @@ async function handleCalculation(job: JobRow) {
         growthMax: snapshots.ruleRow.ranges.growth?.max ?? DEFAULT_ECONOMY_RULES.growthMax,
       }
     : DEFAULT_ECONOMY_RULES;
-  const result = calculateEconomy(input, rules);
+  const [jobCountry, calculationTurn] = await Promise.all([
+    db.query.countries.findFirst({ where: eq(countries.id, countryId) }),
+    db.query.turns.findFirst({ where: eq(turns.id, job.turnId) }),
+  ]);
+  if (!jobCountry || !calculationTurn)
+    throw new Error("계산 대상 국가 또는 턴을 찾을 수 없습니다.");
+  const systems = await loadCalculationSystems({
+    country: jobCountry,
+    turn: calculationTurn,
+    economic: snapshots.economic,
+    demographic: snapshots.demographic,
+    unrest: Number(snapshots.political.unrest ?? 0),
+    budgetAdministration: snapshots.fiscalPolicy?.budgetAdministration ?? null,
+  });
+  const result = calculateEconomy(input, rules, systems.structural);
   const { population, populationGrowthRate, ...economicResult } = result;
   const afterEconomic = {
     ...beforeEconomic,
@@ -501,6 +517,9 @@ async function handleCalculation(job: JobRow) {
     }
   }
 
+  const driftChanges = applyMonthlyDrifts(afterPolitical, systems.drift, systems.months);
+  const systemsEvidence = calculationSystemsEvidence(systems, driftChanges);
+
   await db
     .insert(turnCountryWorkspaces)
     .values({
@@ -519,6 +538,7 @@ async function handleCalculation(job: JobRow) {
         sourcePoliticalSnapshotId: snapshots.political.id,
         deterministic: true,
         macroInput: input,
+        politicalSystems: systemsEvidence,
       },
     })
     .onConflictDoUpdate({
@@ -537,6 +557,7 @@ async function handleCalculation(job: JobRow) {
           sourcePoliticalSnapshotId: snapshots.political.id,
           deterministic: true,
           macroInput: input,
+          politicalSystems: systemsEvidence,
         },
         updatedAt: new Date(),
       },

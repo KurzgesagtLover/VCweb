@@ -14,6 +14,8 @@ import {
   countryAssignments,
   countryDevelopmentTracks,
   countryFlags,
+  countryLawChanges,
+  countryLaws,
   countryFiscalPolicies,
   countryOffices,
   countryPoliticalResources,
@@ -46,6 +48,7 @@ import {
   parties,
   partySnapshots,
   policyGoals,
+  politicalPowerLedger,
   politicalSnapshots,
   researchAllocations,
   reviewComments,
@@ -154,6 +157,9 @@ export async function deleteCountryFully(input: {
       .where(eq(countryDevelopmentTracks.countryId, countryId));
     await tx.delete(adminChangeProposals).where(eq(adminChangeProposals.countryId, countryId));
     await tx.delete(countryFiscalPolicies).where(eq(countryFiscalPolicies.countryId, countryId));
+    await tx.delete(politicalPowerLedger).where(eq(politicalPowerLedger.countryId, countryId));
+    await tx.delete(countryLawChanges).where(eq(countryLawChanges.countryId, countryId));
+    await tx.delete(countryLaws).where(eq(countryLaws.countryId, countryId));
     await tx
       .delete(countryPoliticalResources)
       .where(eq(countryPoliticalResources.countryId, countryId));

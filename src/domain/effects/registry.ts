@@ -12,7 +12,13 @@ export const effectInputSchema = z.object({
 });
 
 export type EffectInput = z.infer<typeof effectInputSchema>;
-type Rule = { operations: Array<"ADD" | "MULTIPLY">; min: string; max: string };
+type Rule = {
+  operations: Array<"ADD" | "MULTIPLY">;
+  min: string;
+  max: string;
+  /** 지속 기간 없이 영구 적용하면 안 되는 지표 */
+  requiresDuration?: boolean;
+};
 
 const rules: Record<string, Rule> = {
   "COUNTRY.realGdpGrowth": { operations: ["ADD", "MULTIPLY"], min: "-0.08", max: "0.08" },
@@ -78,6 +84,13 @@ const rules: Record<string, Rule> = {
   "COUNTRY.suffrage": { operations: ["ADD"], min: "-150", max: "150" },
   "COUNTRY.partySystem": { operations: ["ADD"], min: "-150", max: "150" },
   "COUNTRY.judicialIndependence": { operations: ["ADD"], min: "-150", max: "150" },
+  "COUNTRY.politicalPower": { operations: ["ADD"], min: "-100", max: "100" },
+  "COUNTRY.politicalPowerIncome": {
+    operations: ["ADD"],
+    min: "-30",
+    max: "30",
+    requiresDuration: true,
+  },
   "PARTY.support": { operations: ["ADD"], min: "-0.08", max: "0.08" },
   "PARTY.organization": { operations: ["ADD"], min: "-12", max: "12" },
   "RELATION.score": { operations: ["ADD"], min: "-20", max: "20" },
@@ -97,6 +110,9 @@ export function validateEffect(raw: unknown) {
   if (!rule) return { valid: false as const, effect, warning: "허용되지 않은 대상 지표입니다." };
   if (!rule.operations.includes(effect.operation)) {
     return { valid: false as const, effect, warning: "허용되지 않은 연산입니다." };
+  }
+  if (rule.requiresDuration && effect.durationTurns === null) {
+    return { valid: false as const, effect, warning: "지속 기간을 정해야 하는 지표입니다." };
   }
   const value = new Decimal(effect.value);
   if (!value.isFinite() || value.lt(rule.min) || value.gt(rule.max)) {

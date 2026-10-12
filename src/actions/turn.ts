@@ -47,7 +47,7 @@ import {
   turnJobsAreSettled,
 } from "@/src/services/job-runner";
 import { applyCountryDevelopmentDeltas } from "@/src/services/development-tracks";
-import { getPoliticalPowerState } from "@/src/services/political-power";
+import { settleCountryPoliticalPower } from "@/src/services/laws";
 
 function requireConfirmation(formData: FormData) {
   if (formData.get("confirm") !== "yes")
@@ -402,6 +402,7 @@ export async function publishTurnCore(
           afterEconomic: turnCountryWorkspaces.afterEconomic,
           afterDemographic: turnCountryWorkspaces.afterDemographic,
           afterPolitical: turnCountryWorkspaces.afterPolitical,
+          evidence: turnCountryWorkspaces.evidence,
         })
         .from(turnCountryWorkspaces)
         .innerJoin(countries, eq(turnCountryWorkspaces.countryId, countries.id))
@@ -568,14 +569,7 @@ export async function publishTurnCore(
         : [],
     ),
   ];
-  const politicalPowerByCountry = new Map(
-    await Promise.all(
-      workspaceRows.map(async (workspace) => {
-        const resource = await getPoliticalPowerState(workspace.countryId, campaign);
-        return [workspace.countryId, resource.balance] as const;
-      }),
-    ),
-  );
+  const publishedAt = new Date();
 
   await db.transaction(async (tx) => {
     const key = turnStepKey(campaign.id, turn.id, "PUBLISH");
@@ -600,12 +594,20 @@ export async function publishTurnCore(
       const economic = { ...workspace.afterEconomic } as Record<string, unknown>;
       const demographic = { ...workspace.afterDemographic } as Record<string, unknown>;
       const political = { ...workspace.afterPolitical } as Record<string, unknown>;
-      political.politicalPower = politicalPowerByCountry.get(workspace.countryId) ?? "100";
       for (const effect of snapshotEffects) {
         if (effect.targetType === "COUNTRY" && effect.targetId === workspace.countryId) {
           applyEffectToSnapshot(economic, political, effect);
         }
       }
+      await settleCountryPoliticalPower(tx, {
+        campaign,
+        turn,
+        countryId: workspace.countryId,
+        political,
+        snapshotEffects,
+        evidence: workspace.evidence,
+        now: publishedAt,
+      });
       for (const key of ["id", "turnId", "createdAt", "updatedAt", "calculationState"]) {
         delete economic[key];
         delete demographic[key];

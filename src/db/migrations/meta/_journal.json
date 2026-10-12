@@ -316,6 +316,13 @@
       "when": 1788275643687,
       "tag": "0044_remove_hex_map",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791821734040,
+      "tag": "0045_political_power_laws",
+      "breakpoints": true
     }
   ]
 }
