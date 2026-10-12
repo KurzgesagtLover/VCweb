@@ -40,6 +40,7 @@ import {
   lawDefinition,
   lawStructuralEffects,
   netIncomePerGameDay,
+  remainingCooldownMonths,
   requireLawDefinition,
   resolveLawStages,
   settleCulturalCommitments,
@@ -50,6 +51,7 @@ import {
   type UpkeepItem,
 } from "@/src/domain/politics/laws";
 import { clampPoliticalPower, POLITICAL_POWER_MAX } from "@/src/domain/politics/political-power";
+import { monthsAfterTurnEnd } from "@/src/domain/turn/period";
 import { getPoliticalPowerState, lockAndAccruePoliticalPower } from "./political-power";
 
 type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -105,11 +107,12 @@ async function latestPolitical(reader: Reader, countryId: string) {
 }
 
 /** 법별로 마지막으로 시행된 턴 순번 */
-async function lastAppliedSequences(reader: Reader, countryId: string) {
+/** 법별로 마지막 변경이 시행된 턴의 끝 날짜(YYYY-MM-DD). */
+async function lastAppliedTurnEnds(reader: Reader, countryId: string) {
   const rows = await reader
     .select({
       lawKey: countryLawChanges.lawKey,
-      sequence: sql<number>`max(${turns.sequence})`,
+      gameDateEnd: sql<string>`max(${turns.gameDateEnd})::text`,
     })
     .from(countryLawChanges)
     .innerJoin(turns, eq(countryLawChanges.appliedTurnId, turns.id))
@@ -120,7 +123,7 @@ async function lastAppliedSequences(reader: Reader, countryId: string) {
       ),
     )
     .groupBy(countryLawChanges.lawKey);
-  return new Map(rows.map((row) => [row.lawKey, Number(row.sequence)]));
+  return new Map(rows.map((row) => [row.lawKey, String(row.gameDateEnd)]));
 }
 
 async function setLawStage(
@@ -655,7 +658,7 @@ export async function orderLawChange(input: {
       .where(eq(countries.id, input.country.id))
       .limit(1);
     if (!currentCountry) throw new Error("국가를 찾을 수 없습니다.");
-    const [stages, pendingRows, lastSequences, political, atWar] = await Promise.all([
+    const [stages, pendingRows, lastTurnEnds, political, atWar] = await Promise.all([
       getCountryLawStages(tx, currentCountry),
       tx
         .select({ id: countryLawChanges.id })
@@ -668,19 +671,22 @@ export async function orderLawChange(input: {
           ),
         )
         .limit(1),
-      lastAppliedSequences(tx, input.country.id),
+      lastAppliedTurnEnds(tx, input.country.id),
       latestPolitical(tx, input.country.id),
       isCountryAtWar(tx, input.campaign.id, input.country.id),
     ]);
     const currentStage = stages[definition.key];
-    const lastSequence = lastSequences.get(definition.key);
+    const lastTurnEnd = lastTurnEnds.get(definition.key);
     const evaluation = evaluateLawChange(definition, {
       currentStage,
       targetStage: input.targetStage,
       democracy: political?.democracy ?? 50,
       balance: resource.balance,
       atWar,
-      turnsSinceLastChange: lastSequence === undefined ? null : input.turn.sequence - lastSequence,
+      monthsSinceLastChange:
+        lastTurnEnd === undefined
+          ? null
+          : monthsAfterTurnEnd(lastTurnEnd, input.turn.gameDateStart),
       hasPendingOrder: pendingRows.length > 0,
       turnOpen: input.turn.status === "DRAFT",
     });
@@ -896,7 +902,8 @@ export type LawBoardEntry = {
     erosion: string;
     upkeep: string;
   } | null;
-  cooldownRemaining: number;
+  /** 다시 바꿀 수 있을 때까지 남은 게임 개월 수 */
+  cooldownRemainingMonths: number;
   options: Array<{
     direction: "DOWN" | "UP";
     targetStage: number;
@@ -914,7 +921,7 @@ export async function getLawBoard(input: {
   turn: Turn | null;
 }) {
   const power = await getPoliticalPowerState(input.country.id, input.campaign);
-  const [stages, changes, lastSequences, political, atWar, ledgerRows, administration] =
+  const [stages, changes, lastTurnEnds, political, atWar, ledgerRows, administration] =
     await Promise.all([
       getCountryLawStages(db, input.country),
       db
@@ -926,7 +933,7 @@ export async function getLawBoard(input: {
             inArray(countryLawChanges.status, ["PENDING", "ACTIVE"]),
           ),
         ),
-      lastAppliedSequences(db, input.country.id),
+      lastAppliedTurnEnds(db, input.country.id),
       latestPolitical(db, input.country.id),
       isCountryAtWar(db, input.campaign.id, input.country.id),
       db
@@ -948,9 +955,11 @@ export async function getLawBoard(input: {
       (row) =>
         row.lawKey === definition.key && row.status === "ACTIVE" && row.upkeepMode === "ADAPTIVE",
     );
-    const lastSequence = lastSequences.get(definition.key);
-    const turnsSince =
-      lastSequence === undefined || !input.turn ? null : input.turn.sequence - lastSequence;
+    const lastTurnEnd = lastTurnEnds.get(definition.key);
+    const monthsSince =
+      lastTurnEnd === undefined || !input.turn
+        ? null
+        : monthsAfterTurnEnd(lastTurnEnd, input.turn.gameDateStart);
     const options = (
       [
         ["DOWN", stage - 1],
@@ -965,7 +974,7 @@ export async function getLawBoard(input: {
           democracy,
           balance: power.balance,
           atWar,
-          turnsSinceLastChange: turnsSince,
+          monthsSinceLastChange: monthsSince,
           hasPendingOrder: Boolean(pendingRow),
           turnOpen: input.turn?.status === "DRAFT",
         });
@@ -992,8 +1001,7 @@ export async function getLawBoard(input: {
             upkeep: adaptiveUpkeep(activeRow).toString(),
           }
         : null,
-      cooldownRemaining:
-        turnsSince === null ? 0 : Math.max(0, definition.cooldownTurns - turnsSince),
+      cooldownRemainingMonths: remainingCooldownMonths(definition, monthsSince),
       options,
     };
   });

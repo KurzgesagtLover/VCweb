@@ -13,6 +13,7 @@ import {
   LAW_DEFINITIONS,
   lawStructuralEffects,
   netIncomePerGameDay,
+  remainingCooldownMonths,
   requireLawDefinition,
   resolveLawStages,
   settleCulturalCommitments,
@@ -28,7 +29,7 @@ const openContext: LawChangeContext = {
   democracy: 50,
   balance: "500",
   atWar: false,
-  turnsSinceLastChange: null,
+  monthsSinceLastChange: null,
   hasPendingOrder: false,
   turnOpen: true,
 };
@@ -117,8 +118,15 @@ describe("law change rules", () => {
       false,
     );
     expect(
-      evaluateLawChange(conscription, { ...openContext, turnsSinceLastChange: 1 }).reason,
-    ).toContain("2턴");
+      evaluateLawChange(conscription, { ...openContext, monthsSinceLastChange: 3 }).reason,
+    ).toContain("12개월");
+    // 하루 이틀 차이로 12개월에 조금 못 미쳐도 쿨다운은 끝난 것으로 본다.
+    expect(
+      evaluateLawChange(conscription, { ...openContext, monthsSinceLastChange: 11.95, atWar: true })
+        .allowed,
+    ).toBe(true);
+    expect(remainingCooldownMonths(conscription, 9)).toBe(3);
+    expect(remainingCooldownMonths(conscription, null)).toBe(0);
     expect(evaluateLawChange(conscription, openContext).reason).toContain("전쟁");
     expect(evaluateLawChange(conscription, { ...openContext, atWar: true }).allowed).toBe(true);
     expect(

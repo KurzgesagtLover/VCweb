@@ -45,7 +45,8 @@ import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
 import { calculateTaxRevenue } from "@/src/domain/economy/tax";
 import { validateEffects } from "@/src/domain/effects/registry";
 import { isPolicyMetric, metricValue } from "@/src/domain/policy/metrics";
-import { applyMonthlyDrifts } from "@/src/domain/politics/drift";
+import { applyMonthlyDrifts, roundPoliticalMetric } from "@/src/domain/politics/drift";
+import { turnPeriod, yearsBetweenTurnEnds } from "@/src/domain/turn/period";
 import {
   calculatePolicyEffectiveness,
   calculatePoliticalState,
@@ -115,16 +116,54 @@ async function claimJob(): Promise<JobRow | null> {
   return result.at(0) ?? null;
 }
 
+/** 1년 전 지출을 찾기 위해 거슬러 올라가는 스냅샷 수. 월 단위 턴도 1년 넘게 덮는다. */
+const SPENDING_REFERENCE_LOOKBACK = 14;
+
+/**
+ * 재정 충격과 지출 관성은 연간 지출 변화로 정의돼 있다.
+ * 가장 최근 스냅샷보다 1년 이상 앞선 첫 스냅샷을 기준으로 삼고, 없으면 가장 오래된 스냅샷을 쓴다.
+ */
+function annualSpendingReference(rows: Array<{ governmentSpending: string; gameDateEnd: string }>) {
+  const [latest, ...earlier] = rows;
+  if (!latest) return null;
+  let fallback: { governmentSpending: string; gapYears: number } | null = null;
+  for (const row of earlier) {
+    const gapYears = yearsBetweenTurnEnds(row.gameDateEnd, latest.gameDateEnd);
+    if (gapYears <= 0) continue;
+    fallback = { governmentSpending: row.governmentSpending, gapYears };
+    if (gapYears >= 0.98) return fallback;
+  }
+  return fallback;
+}
+
+/**
+ * AI 판정·사건 생성에 넘기는 턴 길이 정보.
+ * 효과의 durationTurns와 지속 효과 값은 턴 단위라서, 한 턴이 몇 개월인지 알려 줘야 한다.
+ */
+async function turnContextFor(turnId: string | null | undefined) {
+  if (!turnId) return null;
+  const turn = await db.query.turns.findFirst({ where: eq(turns.id, turnId) });
+  if (!turn) return null;
+  const months = Math.round(turnPeriod(turn.gameDateStart, turn.gameDateEnd).months * 10) / 10;
+  return {
+    sequence: turn.sequence,
+    gameDateStart: turn.gameDateStart,
+    gameDateEnd: turn.gameDateEnd,
+    monthsPerTurn: months,
+    note: `한 턴은 게임 시간 약 ${months}개월이다. durationTurns와 expectedDurationTurns는 턴 수이고, 지속 효과(durationTurns가 있는 효과)의 value는 매 턴 반복 적용된다. 효과 크기는 이 턴 길이에 맞춰 잡는다(1년 분량의 변화라면 ${months}/12 비율로 줄인다).`,
+  };
+}
+
 async function latestCountrySimulationState(countryId: string, campaignId: string) {
   const [economic, demographic, political, institutions, companies, ruleRow, fiscalPolicy] =
     await Promise.all([
       db
-        .select({ snapshot: economicSnapshots })
+        .select({ snapshot: economicSnapshots, gameDateEnd: turns.gameDateEnd })
         .from(economicSnapshots)
         .innerJoin(turns, eq(economicSnapshots.turnId, turns.id))
         .where(eq(economicSnapshots.countryId, countryId))
         .orderBy(desc(turns.sequence))
-        .limit(2),
+        .limit(SPENDING_REFERENCE_LOOKBACK),
       db
         .select({ snapshot: demographicSnapshots })
         .from(demographicSnapshots)
@@ -181,7 +220,12 @@ async function latestCountrySimulationState(countryId: string, campaignId: strin
   }
   return {
     economic: effectiveEconomic,
-    previousEconomic: economic[1]?.snapshot,
+    spendingReference: annualSpendingReference(
+      economic.map((row) => ({
+        governmentSpending: row.snapshot.governmentSpending,
+        gameDateEnd: row.gameDateEnd,
+      })),
+    ),
     demographic: demographic[0]?.snapshot,
     political: political[0]?.snapshot,
     institutions,
@@ -254,7 +298,7 @@ function applyScheduledModifier(
   const value = new Decimal(modifier.value);
   const next = modifier.operation === "MULTIPLY" ? current.mul(value.plus(1)) : current.plus(value);
   if (scheduledPoliticalMetrics.has(modifier.metric)) {
-    target[modifier.metric] = Math.round(clampNumber(next.toNumber()));
+    target[modifier.metric] = roundPoliticalMetric(clampNumber(next.toNumber()));
     return;
   }
   if (["incomeGini", "wealthGini", "povertyRate"].includes(modifier.metric)) {
@@ -352,7 +396,7 @@ async function handleCalculation(job: JobRow) {
     governmentRevenue: policyRevenue,
     governmentSpending: snapshots.economic.governmentSpending,
     previousGovernmentSpending:
-      snapshots.previousEconomic?.governmentSpending ?? snapshots.economic.governmentSpending,
+      snapshots.spendingReference?.governmentSpending ?? snapshots.economic.governmentSpending,
     nationalDebt: snapshots.economic.nationalDebt,
     policyRate: snapshots.economic.policyRate,
     currentAccountToGdp: snapshots.economic.currentAccountToGdp,
@@ -397,8 +441,12 @@ async function handleCalculation(job: JobRow) {
     unrest: Number(snapshots.political.unrest ?? 0),
     budgetAdministration: snapshots.fiscalPolicy?.budgetAdministration ?? null,
   });
-  const result = calculateEconomy(input, rules, systems.structural);
-  const { population, populationGrowthRate, ...economicResult } = result;
+  const period = turnPeriod(calculationTurn.gameDateStart, calculationTurn.gameDateEnd);
+  const result = calculateEconomy(input, rules, systems.structural, {
+    periodYears: period.years,
+    spendingGrowthPeriodYears: snapshots.spendingReference?.gapYears ?? 1,
+  });
+  const { population, populationGrowthRate, periodYears, ...economicResult } = result;
   const afterEconomic = {
     ...beforeEconomic,
     ...economicResult,
@@ -476,6 +524,7 @@ async function handleCalculation(job: JobRow) {
     incomeGini: Number(afterEconomic.incomeGini),
     povertyRate: Number(afterEconomic.povertyRate),
     activePolicyImpulse,
+    periodYears: period.years,
   });
   afterPolitical.stability = politicalState.stability;
   afterPolitical.policySupport = politicalState.policySupport;
@@ -497,21 +546,21 @@ async function handleCalculation(job: JobRow) {
     const status = achieved ? "ACHIEVED" : expired ? "FAILED" : "ACTIVE";
     goalUpdates.push({ id: goal.id, latestValue: String(currentValue), status });
     if (status === "ACHIEVED") {
-      afterPolitical.policySupport = Math.round(
+      afterPolitical.policySupport = roundPoliticalMetric(
         clampNumber(Number(afterPolitical.policySupport) + 4),
       );
-      afterPolitical.governmentApproval = Math.round(
+      afterPolitical.governmentApproval = roundPoliticalMetric(
         clampNumber(Number(afterPolitical.governmentApproval) + 3),
       );
     } else if (status === "FAILED") {
       const planned = goal.goalType === "PLANNED";
-      afterPolitical.policySupport = Math.round(
+      afterPolitical.policySupport = roundPoliticalMetric(
         clampNumber(Number(afterPolitical.policySupport) - (planned ? 8 : 5)),
       );
-      afterPolitical.governmentApproval = Math.round(
+      afterPolitical.governmentApproval = roundPoliticalMetric(
         clampNumber(Number(afterPolitical.governmentApproval) - (planned ? 7 : 4)),
       );
-      afterPolitical.stability = Math.round(
+      afterPolitical.stability = roundPoliticalMetric(
         clampNumber(Number(afterPolitical.stability) - (planned ? 9 : 3)),
       );
     }
@@ -538,6 +587,7 @@ async function handleCalculation(job: JobRow) {
         sourcePoliticalSnapshotId: snapshots.political.id,
         deterministic: true,
         macroInput: input,
+        period: { ...period, economyPeriodYears: periodYears },
         politicalSystems: systemsEvidence,
       },
     })
@@ -557,6 +607,7 @@ async function handleCalculation(job: JobRow) {
           sourcePoliticalSnapshotId: snapshots.political.id,
           deterministic: true,
           macroInput: input,
+          period: { ...period, economyPeriodYears: periodYears },
           politicalSystems: systemsEvidence,
         },
         updatedAt: new Date(),
@@ -776,12 +827,13 @@ async function handleSubmissionJudgment(job: JobRow) {
     where: eq(submissions.id, submissionId),
   });
   if (!submission) throw new Error("판정할 연재가 없습니다.");
-  const [country, policyGoal, state] = await Promise.all([
+  const [country, policyGoal, state, turnContext] = await Promise.all([
     db.query.countries.findFirst({ where: eq(countries.id, submission.countryId) }),
     submission.policyGoalId
       ? db.query.policyGoals.findFirst({ where: eq(policyGoals.id, submission.policyGoalId) })
       : null,
     latestCountrySimulationState(submission.countryId, submission.campaignId),
+    turnContextFor(submission.turnId),
   ]);
   await persistJudgment({
     job,
@@ -807,6 +859,7 @@ async function handleSubmissionJudgment(job: JobRow) {
       currentEconomic: state.economic,
       currentPolitical: state.political,
       currentVersion: submission.currentVersion,
+      turnContext,
     },
   });
 }
@@ -821,9 +874,12 @@ async function handleOpposition(job: JobRow) {
     ),
   });
   if (existing) return;
-  const activeGoals = await db.query.policyGoals.findMany({
-    where: and(eq(policyGoals.countryId, countryId), eq(policyGoals.status, "ACTIVE")),
-  });
+  const [activeGoals, turnContext] = await Promise.all([
+    db.query.policyGoals.findMany({
+      where: and(eq(policyGoals.countryId, countryId), eq(policyGoals.status, "ACTIVE")),
+    }),
+    turnContextFor(job.turnId),
+  ]);
   const run = await persistJudgment({
     job,
     taskType: "GENERATE_OPPOSITION_ACTION",
@@ -843,6 +899,7 @@ async function handleOpposition(job: JobRow) {
         targetValue: goal.targetValue,
         targetGameDate: goal.targetGameDate,
       })),
+      turnContext,
     },
   });
   const proposal = await db.query.judgmentProposals.findFirst({
@@ -934,18 +991,22 @@ async function handleTurnEvent(job: JobRow) {
     where: and(eq(events.sourceType, "AUTO_TURN"), eq(events.sourceId, sourceId)),
   });
   if (existing) return;
-  const workspace = await db.query.turnCountryWorkspaces.findFirst({
-    where: and(
-      eq(turnCountryWorkspaces.turnId, job.turnId),
-      eq(turnCountryWorkspaces.countryId, countryId),
-    ),
-  });
+  const [workspace, turnContext] = await Promise.all([
+    db.query.turnCountryWorkspaces.findFirst({
+      where: and(
+        eq(turnCountryWorkspaces.turnId, job.turnId),
+        eq(turnCountryWorkspaces.countryId, countryId),
+      ),
+    }),
+    turnContextFor(job.turnId),
+  ]);
   const payload = {
     subjectType: "TURN_EVENT",
     countryId,
     targetId: countryId,
     economicState: workspace?.afterEconomic ?? {},
     politicalState: workspace?.afterPolitical ?? {},
+    turnContext,
   };
   const run = await startTaskRun(job, "TURN_EVENT", `${countryId}:${job.turnId}`, payload);
   try {

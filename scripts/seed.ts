@@ -218,7 +218,7 @@ async function seed() {
         lore: "통신 대붕괴 이후 네 국가가 새로운 국제 질서를 만드는 캠페인",
         isActive: true,
         startGameDate: "2080-01-01",
-        monthsPerTurn: 12,
+        monthsPerTurn: 3,
         rulesVersion: "v1",
       })
       .returning();
@@ -243,8 +243,9 @@ async function seed() {
         Array.from({ length: 8 }, (_, index) => ({
           campaignId: campaign.id,
           sequence: index + 1,
+          // 지난 기록은 연 단위, 진행 중인 턴부터 분기 단위로 진행한다.
           gameDateStart: `${2080 + index}-01-01`,
-          gameDateEnd: `${2080 + index}-12-31`,
+          gameDateEnd: index === 7 ? `${2080 + index}-03-31` : `${2080 + index}-12-31`,
           status: index === 7 ? ("DRAFT" as const) : ("PUBLISHED" as const),
           deadlineAt: index === 7 ? nextTurnDeadline() : null,
           stepCompletedAt:

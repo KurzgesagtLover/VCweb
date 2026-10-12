@@ -10,6 +10,7 @@ import { isPolicyMetric, POLICY_METRICS } from "@/src/domain/policy/metrics";
 import { AdminEconomySimulator } from "./admin-economy-simulator";
 import { EconomicTrendCharts, type EconomicTrendPoint } from "./economic-trend-charts";
 import { formatDecimal, formatMoney, formatPercent } from "./format";
+import { formatMetric } from "./metric-format";
 
 type Ledger = NonNullable<Awaited<ReturnType<typeof getCountryLedger>>>;
 export type EconomyDetailTab = "overview" | "fiscal" | "industry" | "trend" | "simulate" | "edit";
@@ -444,7 +445,7 @@ export function EconomicLedgerDetail({
               ["기준금리", formatPercent(economy.policyRate)],
               ["GDP 대비 경상수지", formatPercent(economy.currentAccountToGdp)],
               ["신용등급", `${economy.creditRating} · ${economy.creditRatingAgency}`],
-              ["신용 점수", `${economy.creditScore}/100`],
+              ["신용 점수", `${formatMetric(economy.creditScore)}/100`],
               ["금액 단위", economy.scale],
               ["계산 규칙", economy.rulesVersion],
             ]}

@@ -7,6 +7,7 @@ import {
 import type { EconomicSystem } from "@/src/domain/policy/model";
 import { addDrifts, formatMonthlyDrift, scaleDrift, type MonthlyDrift } from "./drift";
 import { clampPoliticalPower } from "./political-power";
+import { turnPeriod } from "../turn/period";
 
 /**
  * 법·제도와 정치력 수지.
@@ -77,7 +78,8 @@ export type LawDefinition = {
   storage: LawStorage;
   upkeepMode: LawUpkeepMode;
   defaultStage: number;
-  cooldownTurns: number;
+  /** 마지막 변경이 시행된 턴이 끝난 뒤 다시 바꿀 수 있을 때까지의 게임 개월 수 */
+  cooldownMonths: number;
   stages: LawStage[];
 };
 
@@ -94,7 +96,7 @@ const SOCIAL_LAWS: LawDefinition[] = SOCIAL_INSTITUTIONS.map((institution) => ({
   storage: "TRACK",
   upkeepMode: "ADAPTIVE",
   defaultStage: Math.min(DEFAULT_DEVELOPMENT_STAGE, institution.stages.length),
-  cooldownTurns: 2,
+  cooldownMonths: 12,
   stages: institution.stages.map((label) => ({
     label,
     description: "",
@@ -112,7 +114,7 @@ const POLICY_LAWS: LawDefinition[] = [
     storage: "LAW",
     upkeepMode: "FIXED",
     defaultStage: 1,
-    cooldownTurns: 2,
+    cooldownMonths: 12,
     stages: [
       {
         label: "지원병제",
@@ -179,7 +181,7 @@ const POLICY_LAWS: LawDefinition[] = [
     storage: "LAW",
     upkeepMode: "FIXED",
     defaultStage: 3,
-    cooldownTurns: 2,
+    cooldownMonths: 12,
     stages: [
       {
         label: "폐쇄 경제",
@@ -231,7 +233,7 @@ const POLICY_LAWS: LawDefinition[] = [
     storage: "LAW",
     upkeepMode: "FIXED",
     defaultStage: 3,
-    cooldownTurns: 3,
+    cooldownMonths: 24,
     stages: [
       {
         label: "자유방임",
@@ -405,8 +407,8 @@ export type LawChangeContext = {
   democracy: number;
   balance: Decimal.Value;
   atWar: boolean;
-  /** 마지막으로 시행된 변경 뒤 지난 턴 수. 바꾼 적이 없으면 null */
-  turnsSinceLastChange: number | null;
+  /** 마지막으로 시행된 변경의 턴이 끝난 뒤 지난 게임 개월 수. 바꾼 적이 없으면 null */
+  monthsSinceLastChange: number | null;
   hasPendingOrder: boolean;
   turnOpen: boolean;
 };
@@ -416,6 +418,19 @@ export type LawChangeEvaluation = {
   reason: string | null;
   quote: LawChangeQuote | null;
 };
+
+/** 일 단위 턴에서 생기는 하루 이틀 오차는 쿨다운 판정에서 무시한다. */
+const COOLDOWN_TOLERANCE_MONTHS = 0.1;
+
+/** 쿨다운이 끝날 때까지 남은 게임 개월 수. 바꾼 적이 없거나 끝났으면 0. */
+export function remainingCooldownMonths(
+  definition: LawDefinition,
+  monthsSinceLastChange: number | null,
+) {
+  if (monthsSinceLastChange === null) return 0;
+  const remaining = definition.cooldownMonths - monthsSinceLastChange;
+  return remaining > COOLDOWN_TOLERANCE_MONTHS ? Math.round(remaining * 10) / 10 : 0;
+}
 
 export function evaluateLawChange(
   definition: LawDefinition,
@@ -437,10 +452,10 @@ export function evaluateLawChange(
   if (!context.turnOpen) return deny("턴이 열려 있을 때만 바꿀 수 있습니다.");
   if (context.hasPendingOrder) return deny("이미 시행을 기다리는 변경이 있습니다.");
   if (
-    context.turnsSinceLastChange !== null &&
-    context.turnsSinceLastChange < definition.cooldownTurns
+    context.monthsSinceLastChange !== null &&
+    context.monthsSinceLastChange < definition.cooldownMonths - COOLDOWN_TOLERANCE_MONTHS
   ) {
-    return deny(`최근 변경 뒤 ${definition.cooldownTurns}턴이 지나야 다시 바꿀 수 있습니다.`);
+    return deny(`최근 변경 뒤 ${definition.cooldownMonths}개월이 지나야 다시 바꿀 수 있습니다.`);
   }
   if (definition.stages[context.targetStage - 1]?.requiresWar && !context.atWar) {
     return deny("전쟁 중에만 시행할 수 있습니다.");
@@ -815,10 +830,7 @@ export function netIncomePerGameDay(netPerYear: Decimal.Value) {
 
 /** 턴 구간의 게임 연수. 게임 날짜는 양 끝을 포함한다. */
 export function turnLengthInYears(gameDateStart: string, gameDateEnd: string) {
-  const start = Date.parse(`${gameDateStart}T00:00:00.000Z`);
-  const end = Date.parse(`${gameDateEnd}T00:00:00.000Z`);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 1;
-  return (end - start + 86_400_000) / 86_400_000 / GAME_DAYS_PER_YEAR;
+  return turnPeriod(gameDateStart, gameDateEnd).years;
 }
 
 export { clampPoliticalPower };

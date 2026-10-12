@@ -7,6 +7,7 @@ import { governmentBranchLabel, metricLabel } from "@/src/domain/display-labels"
 import { getLawBoard } from "@/src/services/laws";
 import { getPoliticalPowerState } from "@/src/services/political-power";
 import { formatMoney, formatPercent } from "@/src/ui/format";
+import { formatMetric, roundedMetric } from "@/src/ui/metric-format";
 import {
   GovernmentPersonnelCarousel,
   type PersonnelBranch,
@@ -269,19 +270,19 @@ function OverviewView({
       <div className="tno-headline-row">
         <TnoHeadline
           label="안정도"
-          value={p?.stability ?? "—"}
+          value={formatMetric(p?.stability)}
           meta="0–100"
           tone={p && p.stability < 40 ? "bad" : "good"}
         />
         <TnoHeadline
           label="정권 지지도"
-          value={p?.governmentApproval ?? "—"}
+          value={formatMetric(p?.governmentApproval)}
           meta="0–100"
           tone={p && p.governmentApproval < 40 ? "bad" : undefined}
         />
         <TnoHeadline
           label="정통성"
-          value={p?.legitimacy ?? "—"}
+          value={formatMetric(p?.legitimacy)}
           meta="0–100"
           tone={p && p.legitimacy < 40 ? "bad" : undefined}
         />
@@ -330,7 +331,7 @@ function OverviewView({
             <TnoTrend
               rows={ledger.politicalTrend.map((row) => ({
                 label: `T${row.turnSequence}`,
-                value: row.snapshot.governmentApproval,
+                value: roundedMetric(row.snapshot.governmentApproval) ?? 0,
               }))}
             />
           </TnoPlate>
@@ -395,8 +396,14 @@ export default async function PoliticsPage({
       readout={
         <>
           <TnoReadout label="여당" value={politics?.rulingParty ?? "—"} />
-          <TnoReadout label="안정" value={politics ? `${politics.stability}%` : "—"} />
-          <TnoReadout label="지지" value={politics ? `${politics.governmentApproval}%` : "—"} />
+          <TnoReadout
+            label="안정"
+            value={politics ? `${formatMetric(politics.stability)}%` : "—"}
+          />
+          <TnoReadout
+            label="지지"
+            value={politics ? `${formatMetric(politics.governmentApproval)}%` : "—"}
+          />
           <TnoReadout label="정치력" value={<PoliticalPowerTicker {...politicalPower} />} />
         </>
       }

@@ -9,6 +9,7 @@ import { domainLabel, metricLabel } from "@/src/domain/display-labels";
 import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
 import { CountryFlag } from "@/src/ui/country-flag";
 import { formatDecimal, formatMoney, formatPercent } from "@/src/ui/format";
+import { formatMetric } from "@/src/ui/metric-format";
 import {
   TnoBanner,
   TnoChips,
@@ -137,7 +138,7 @@ export default async function DashboardPage({
             <TnoHeadline
               label="국가신용등급"
               value={economy?.creditRating ?? "—"}
-              meta={`환산 점수 ${economy?.creditScore ?? "—"}`}
+              meta={`환산 점수 ${formatMetric(economy?.creditScore)}`}
             />
           </div>
 

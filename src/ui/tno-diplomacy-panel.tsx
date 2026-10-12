@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { sendDiplomaticProposalAction } from "@/src/actions/diplomacy";
 import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
 import { CountryFlag } from "./country-flag";
+import { formatMetric } from "./metric-format";
 
 type StoredDiplomaticStatus =
   | "NORMAL"
@@ -391,7 +392,7 @@ export function TnoDiplomacyPanel({
           </span>
           <span className="tno-title-metric" title="상대국 안정도">
             <em>안정</em>
-            {detail?.country.stability ?? "—"}%
+            {formatMetric(detail?.country.stability)}%
           </span>
           <span className="tno-title-metric" title="상대국 정권 지지도">
             <em>지지</em>
@@ -447,11 +448,11 @@ export function TnoDiplomacyPanel({
             <div className="tno-stat-grid">
               <div>
                 <span>안정도</span>
-                <strong>{detail?.country.stability ?? "—"}</strong>
+                <strong>{formatMetric(detail?.country.stability)}</strong>
               </div>
               <div>
                 <span>정통성</span>
-                <strong>{detail?.country.legitimacy ?? "—"}</strong>
+                <strong>{formatMetric(detail?.country.legitimacy)}</strong>
               </div>
               <div>
                 <span>정권 지지</span>
@@ -459,15 +460,15 @@ export function TnoDiplomacyPanel({
               </div>
               <div>
                 <span>정책 지지</span>
-                <strong>{detail?.country.policySupport ?? "—"}</strong>
+                <strong>{formatMetric(detail?.country.policySupport)}</strong>
               </div>
               <div>
                 <span>불안</span>
-                <strong>{detail?.country.unrest ?? "—"}</strong>
+                <strong>{formatMetric(detail?.country.unrest)}</strong>
               </div>
               <div>
                 <span>부패</span>
-                <strong>{detail?.country.corruption ?? "—"}</strong>
+                <strong>{formatMetric(detail?.country.corruption)}</strong>
               </div>
               <div>
                 <span>민주주의</span>

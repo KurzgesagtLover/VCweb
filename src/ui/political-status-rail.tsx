@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import type { MapMode } from "@/src/domain/map/map-mode";
+import { formatMetric } from "./metric-format";
 
 export type PoliticalStatusMetrics = {
   stability: number;
@@ -179,11 +180,11 @@ export function PoliticalStatusRail({
               data-tone={tone}
               aria-expanded={isOpen}
               onClick={() => setOpenMetric(isOpen ? null : key)}
-              title={`${label} ${value}${rate === null ? "" : ` · ${rate > 0 ? "+" : ""}${rate.toFixed(2)} /일`}`}
+              title={`${label} ${formatMetric(value)}${rate === null ? "" : ` · ${rate > 0 ? "+" : ""}${rate.toFixed(2)} /일`}`}
             >
               <PoliticalMetricIcon metric={key} />
               <span className="political-status-label">{label}</span>
-              <strong>{value}</strong>
+              <strong>{formatMetric(value)}</strong>
               <span className="political-status-meter" aria-hidden="true">
                 <i
                   data-tone={tone}

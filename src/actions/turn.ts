@@ -46,6 +46,7 @@ import {
   enqueueJob,
   turnJobsAreSettled,
 } from "@/src/services/job-runner";
+import { roundPoliticalMetric } from "@/src/domain/politics/drift";
 import { applyCountryDevelopmentDeltas } from "@/src/services/development-tracks";
 import { settleCountryPoliticalPower } from "@/src/services/laws";
 
@@ -106,7 +107,7 @@ function applyEffectToSnapshot(
     return;
   }
   if (politicalEffectMetrics.has(effect.metric)) {
-    political[effect.metric] = Math.round(
+    political[effect.metric] = roundPoliticalMetric(
       Decimal.max(
         0,
         Decimal.min(100, applyEffectValue(political[effect.metric], effect)),

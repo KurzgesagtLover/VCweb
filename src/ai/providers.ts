@@ -211,8 +211,16 @@ export class FakeAIProvider implements AIProvider {
       countryId?: string;
       targetId?: string;
       title?: string;
+      turnContext?: { monthsPerTurn?: unknown } | null;
     };
     const targetId = payload.targetId ?? payload.countryId ?? "unknown";
+    // 결정론적 효과는 연 단위 턴 기준값이다. 턴이 짧으면 그만큼 줄인다.
+    const monthsPerTurn = Number(payload.turnContext?.monthsPerTurn);
+    const turnScale =
+      Number.isFinite(monthsPerTurn) && monthsPerTurn > 0
+        ? Math.min(1, Math.max(0.05, monthsPerTurn / 12))
+        : 1;
+    const scaled = (value: number) => Math.round(value * turnScale * 100) / 100;
     if (input.taskType === "GENERATE_TURN_EVENT") {
       const data = {
         title: "항만 물류망의 병목 신호",
@@ -229,7 +237,7 @@ export class FakeAIProvider implements AIProvider {
                 targetId,
                 metric: "productivityIndex",
                 operation: "ADD",
-                value: 3,
+                value: scaled(3),
                 durationTurns: 2,
                 reason: "항만 병목 긴급 해소",
               },
@@ -245,7 +253,7 @@ export class FakeAIProvider implements AIProvider {
                 targetId,
                 metric: "governmentApproval",
                 operation: "ADD",
-                value: -2,
+                value: scaled(-2),
                 durationTurns: 1,
                 reason: "민간 위탁에 대한 정치적 논쟁",
               },
@@ -317,7 +325,7 @@ export class FakeAIProvider implements AIProvider {
           targetId,
           metric: isOpposition ? "governmentApproval" : "productivityIndex",
           operation: "ADD",
-          value: isOpposition ? -2 : 2,
+          value: scaled(isOpposition ? -2 : 2),
           durationTurns: 2,
           reason: isOpposition ? "공개 검증 요구에 따른 단기 지지도 압박" : "단계적 제도 정비 효과",
         },

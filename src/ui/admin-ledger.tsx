@@ -10,6 +10,7 @@ import { metricLabel } from "@/src/domain/display-labels";
 import { DEFAULT_ECONOMY_RULES, type EconomyRules } from "@/src/domain/economy/calculator";
 import { EconomicLedgerDetail, type EconomyDetailTab } from "./economic-ledger-detail";
 import { formatMoney, formatPerCapita, formatPercent } from "./format";
+import { formatMetric } from "./metric-format";
 
 type CountryRows = Awaited<ReturnType<typeof getAdminCountryTable>>;
 type Overview = Awaited<ReturnType<typeof getAdminOverview>>;
@@ -114,12 +115,12 @@ export function AdminLedger({
                       </Link>
                     </td>
                     <td>{politics?.governmentForm ?? "—"}</td>
-                    <td className="numeric">{politics?.stability ?? "—"}</td>
-                    <td className="numeric">{politics?.legitimacy ?? "—"}</td>
-                    <td className="numeric">{politics?.governmentApproval ?? "—"}</td>
-                    <td className="numeric">{politics?.policySupport ?? "—"}</td>
-                    <td className="numeric">{politics?.unrest ?? "—"}</td>
-                    <td className="numeric">{politics?.stateCapacity ?? "—"}</td>
+                    <td className="numeric">{formatMetric(politics?.stability)}</td>
+                    <td className="numeric">{formatMetric(politics?.legitimacy)}</td>
+                    <td className="numeric">{formatMetric(politics?.governmentApproval)}</td>
+                    <td className="numeric">{formatMetric(politics?.policySupport)}</td>
+                    <td className="numeric">{formatMetric(politics?.unrest)}</td>
+                    <td className="numeric">{formatMetric(politics?.stateCapacity)}</td>
                   </tr>
                 ),
               )}

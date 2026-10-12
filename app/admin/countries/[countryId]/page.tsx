@@ -19,6 +19,7 @@ import { DevelopmentTrackGrid } from "@/src/ui/development-tracks";
 import { RememberedDisclosure } from "@/src/ui/disclosure";
 import { formatMoney, formatPercent } from "@/src/ui/format";
 import { DataList, MetricCard } from "@/src/ui/metric-card";
+import { formatMetric } from "@/src/ui/metric-format";
 import { PageHead } from "@/src/ui/page-head";
 
 export default async function AdminCountryDetail({
@@ -64,7 +65,7 @@ export default async function AdminCountryDetail({
         <MetricCard label="수도" value={ledger.profile?.capital} />
         <MetricCard label="실질 GDP" value={formatMoney(ledger.economic?.realGdp)} />
         <MetricCard label="성장률" value={formatPercent(ledger.economic?.realGdpGrowth)} />
-        <MetricCard label="안정도" value={ledger.political?.stability} />
+        <MetricCard label="안정도" value={formatMetric(ledger.political?.stability)} />
       </section>
       <section className="panel settings-panel">
         <div className="panel-head">

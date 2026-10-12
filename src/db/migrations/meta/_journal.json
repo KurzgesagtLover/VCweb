@@ -323,6 +323,13 @@
       "when": 1791821734040,
       "tag": "0045_political_power_laws",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1791900000000,
+      "tag": "0046_quarterly_turns_fractional_metrics",
+      "breakpoints": true
     }
   ]
 }

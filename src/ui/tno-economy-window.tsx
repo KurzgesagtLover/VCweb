@@ -14,6 +14,7 @@ import {
 import { TAX_BASE_WEIGHTS } from "@/src/domain/economy/tax";
 import { administrationTier } from "@/src/domain/economy/administration";
 import { formatMonthlyDrift } from "@/src/domain/politics/drift";
+import { formatMetric } from "./metric-format";
 
 export type EconomySnapshotView = {
   currency: string;
@@ -1041,7 +1042,7 @@ export function TnoEconomyWindow({
               </div>
               <div>
                 <span>신용 점수</span>
-                <strong>{snapshot.creditScore}</strong>
+                <strong>{formatMetric(snapshot.creditScore)}</strong>
               </div>
               <div>
                 <span>생산성</span>

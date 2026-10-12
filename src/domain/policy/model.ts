@@ -1,5 +1,18 @@
+import { roundPoliticalMetric } from "../politics/drift";
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const sigmoid = (value: number) => 1 / (1 + Math.exp(-value));
+
+function normalizePeriodYears(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return 1;
+  return Math.min(10, value);
+}
+
+/** 1년에 annualShare만큼 목표로 다가가는 부분 조정을 기간만큼 적용한 비율. */
+function adjustmentShare(annualShare: number, periodYears: number) {
+  if (periodYears === 1) return annualShare;
+  return 1 - Math.pow(1 - annualShare, periodYears);
+}
 
 export type EconomicSystem = "FREE_MARKET" | "PLANNED";
 
@@ -118,7 +131,10 @@ export function calculatePoliticalState(input: {
   incomeGini: number;
   povertyRate?: number;
   activePolicyImpulse: number;
+  /** 턴 길이(연). 조정 속도와 정책 충격은 연간 기준이라 이 비율만큼 반영한다. 기본 1년 */
+  periodYears?: number;
 }) {
+  const periodYears = normalizePeriodYears(input.periodYears);
   const persistentUnemployment =
     input.unemploymentRate > 0.055 && input.previousUnemploymentRate > 0.055 ? 1.22 : 1;
   const persistentInflation =
@@ -135,13 +151,13 @@ export function calculatePoliticalState(input: {
 
   const policySupport = clamp(
     input.currentPolicySupport +
-      (50 - input.currentPolicySupport) * 0.09 +
-      clamp(input.activePolicyImpulse, -4, 4),
+      (50 - input.currentPolicySupport) * adjustmentShare(0.09, periodYears) +
+      clamp(input.activePolicyImpulse, -4, 4) * periodYears,
     0,
     100,
   );
   const governmentApproval = clamp(
-    input.governmentApproval + clamp((policySupport - 50) * 0.03, -1.5, 1.5),
+    input.governmentApproval + clamp((policySupport - 50) * 0.03, -1.5, 1.5) * periodYears,
     0,
     100,
   );
@@ -162,14 +178,15 @@ export function calculatePoliticalState(input: {
     100,
   );
   const stability = clamp(
-    input.currentStability + (stabilityTarget - input.currentStability) * 0.28,
+    input.currentStability +
+      (stabilityTarget - input.currentStability) * adjustmentShare(0.28, periodYears),
     0,
     100,
   );
   return {
-    stability: Math.round(stability),
-    policySupport: Math.round(policySupport),
-    governmentApproval: Math.round(governmentApproval),
+    stability: roundPoliticalMetric(stability),
+    policySupport: roundPoliticalMetric(policySupport),
+    governmentApproval: roundPoliticalMetric(governmentApproval),
     povertyRate,
     components: {
       unemploymentPenalty,

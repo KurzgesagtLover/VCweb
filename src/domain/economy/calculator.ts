@@ -154,6 +154,19 @@ export type EconomyStructuralAdjustments = {
   revenueEfficiency?: Decimal.Value;
 };
 
+/**
+ * 계산 기간 옵션.
+ *
+ * 모든 계수는 연간 기준이다. 턴이 1년보다 짧으면 연간 변화율을 턴 길이만큼 비례해서 적용하고,
+ * 1년보다 길면 1년 안팎의 구간으로 나눠 반복 계산한다.
+ */
+export type EconomyPeriodOptions = {
+  /** 이번 턴 길이(연). 기본 1년 */
+  periodYears?: Decimal.Value;
+  /** 입력의 직전 정부지출(previousGovernmentSpending)이 현재 지출보다 몇 년 앞선 값인지. 기본 1년 */
+  spendingGrowthPeriodYears?: Decimal.Value;
+};
+
 type ContributionSource = keyof EconomyInput | "policyStructure";
 type Contribution = { source: ContributionSource; value: string; explanation: string };
 
@@ -170,6 +183,44 @@ function signedLogDiminishing(value: Decimal, curvature: Decimal.Value) {
   if (curve.isZero() || value.isZero()) return value;
   const magnitude = d(1).plus(value.abs().mul(curve)).ln().div(curve);
   return value.isNegative() ? magnitude.neg() : magnitude;
+}
+
+const MIN_PERIOD_YEARS = "0.0027";
+const MAX_PERIOD_YEARS = "10";
+
+function normalizePeriod(value: Decimal.Value | undefined) {
+  if (value === undefined || value === null) return d(1);
+  const period = d(value);
+  if (!period.isFinite() || period.lte(0)) return d(1);
+  return clamp(period, MIN_PERIOD_YEARS, MAX_PERIOD_YEARS);
+}
+
+/** 연간 다음 값을 기간 비율만큼 반영한다. 부분 조정형 지표(금리·물가·실업 등)에 쓴다. */
+function lerpPeriod(start: Decimal, annualNext: Decimal, period: Decimal) {
+  if (period.eq(1)) return annualNext;
+  return start.plus(annualNext.minus(start).mul(period));
+}
+
+/** 연간 증가율을 기간만큼 복리로 반영한 배수. */
+function growthFactor(annualRate: Decimal, period: Decimal) {
+  const base = d(1).plus(annualRate);
+  if (period.eq(1)) return base;
+  if (base.lte(0)) return d(0);
+  return base.pow(period);
+}
+
+/** 연간 흐름(재정수지·이자·저축 등)의 기간 분량. */
+function flowForPeriod(annualFlow: Decimal, period: Decimal) {
+  return period.eq(1) ? annualFlow : annualFlow.mul(period);
+}
+
+/** 직전 지출 대비 증가를 연율로 환산한다. 1년보다 짧은 간격은 과대 환산을 막기 위해 그대로 쓴다. */
+function annualSpendingGrowth(current: Decimal, previous: Decimal, gapYears: Decimal) {
+  if (previous.isZero()) return d(0);
+  const ratio = current.div(previous);
+  if (gapYears.lte(1)) return ratio.minus(1);
+  if (ratio.lte(0)) return d(-1);
+  return ratio.pow(d(1).div(gapYears)).minus(1);
 }
 
 export function creditRatingFromScore(score: Decimal.Value) {
@@ -193,10 +244,12 @@ function c(source: ContributionSource, value: Decimal, explanation: string): Con
   return { source, value: value.toSignificantDigits(12).toString(), explanation };
 }
 
-export function calculateEconomy(
+function stepEconomy(
   input: EconomyInput,
-  rules = DEFAULT_ECONOMY_RULES,
-  structural: EconomyStructuralAdjustments = {},
+  rules: EconomyRules,
+  structural: EconomyStructuralAdjustments,
+  period: Decimal,
+  spendingGapYears: Decimal,
 ) {
   const x = Object.fromEntries(ECONOMIC_INPUT_PATHS.map((key) => [key, d(input[key])])) as Record<
     keyof EconomyInput,
@@ -207,21 +260,28 @@ export function calculateEconomy(
   }
   const k = (name: string) => d(rules.coefficients[name] ?? 0);
 
-  const spendingGrowth = x.previousGovernmentSpending.isZero()
-    ? d(0)
-    : x.governmentSpending.div(x.previousGovernmentSpending).minus(1);
+  const spendingGrowth = annualSpendingGrowth(
+    x.governmentSpending,
+    x.previousGovernmentSpending,
+    spendingGapYears,
+  );
   const structuralPopulationGrowth = x.fertilityRate
     .minus(2.1)
     .mul(k("fertility"))
     .plus(d(80).minus(x.lifeExpectancy).neg().mul(k("longevity")))
     .plus(Decimal.max(0, x.medianAge.minus(42)).mul(k("ageing")))
     .plus(x.migrationShock);
-  const populationGrowth = clamp(
+  const annualPopulationGrowth = clamp(
     x.populationGrowthRate.mul("0.65").plus(structuralPopulationGrowth.mul("0.35")),
     "-0.08",
     "0.08",
   );
-  const nextPopulation = Decimal.max(0, x.population.mul(d(1).plus(populationGrowth)));
+  const populationGrowth = clamp(
+    lerpPeriod(x.populationGrowthRate, annualPopulationGrowth, period),
+    "-0.08",
+    "0.08",
+  );
+  const nextPopulation = Decimal.max(0, x.population.mul(growthFactor(populationGrowth, period)));
 
   const fertilityGap = x.fertilityRate.minus("2.1");
   const fertilitySignal = fertilityGap.isNegative()
@@ -420,7 +480,7 @@ export function calculateEconomy(
   ];
   const cycle = cycleContributions.reduce((sum, item) => sum.plus(item.value), d(0));
   const growth = clamp(potentialGrowth.plus(cycle), rules.growthMin, rules.growthMax);
-  const nextRealGdp = Decimal.max(0, x.realGdp.mul(d(1).plus(growth)));
+  const nextRealGdp = Decimal.max(0, x.realGdp.mul(growthFactor(growth, period)));
 
   const outputGap = clamp(growth.minus(potentialGrowth), "-0.12", "0.12");
   const currencyImportPressure = signedSaturation(
@@ -448,8 +508,13 @@ export function calculateEconomy(
     (sum, item) => sum.plus(item.value),
     outputGap.mul("0.35"),
   );
-  const nextInflation = clamp(
+  const annualNextInflation = clamp(
     rawNextInflation.mul("0.85").plus(d("0.02").mul("0.15")),
+    "-0.1",
+    "0.5",
+  );
+  const nextInflation = clamp(
+    lerpPeriod(x.inflationRate, annualNextInflation, period),
     "-0.1",
     "0.5",
   );
@@ -460,11 +525,16 @@ export function calculateEconomy(
     "0.01",
     "0.3",
   );
-  const nextUnemployment = clamp(
+  const annualNextUnemployment = clamp(
     x.unemploymentRate
       .mul("0.82")
       .plus(naturalUnemployment.mul("0.18"))
       .minus(outputGap.mul("0.35")),
+    "0.015",
+    "0.6",
+  );
+  const nextUnemployment = clamp(
+    lerpPeriod(x.unemploymentRate, annualNextUnemployment, period),
     "0.015",
     "0.6",
   );
@@ -478,7 +548,9 @@ export function calculateEconomy(
   const savingsProxy = x.realGni.minus(x.governmentSpending).mul("0.08");
   const nextWealth = Decimal.max(
     0,
-    x.wealth.mul(d(1).plus(x.landPriceGrowth.mul("0.12"))).plus(savingsProxy),
+    x.wealth
+      .mul(growthFactor(x.landPriceGrowth.mul("0.12"), period))
+      .plus(flowForPeriod(savingsProxy, period)),
   );
 
   const effectiveTaxRate = x.nominalGdp.isZero() ? d(0) : x.governmentRevenue.div(x.nominalGdp);
@@ -487,7 +559,7 @@ export function calculateEconomy(
     .mul(effectiveTaxRate)
     .mul(d(1).plus(x.stateCapacity.minus(50).div(5000)))
     .mul(d(1).plus(revenueEfficiency));
-  const nextSpending = x.governmentSpending.mul(d(1).plus(spendingGrowth));
+  const nextSpending = x.governmentSpending.mul(growthFactor(spendingGrowth, period));
   const fiscalBalance = nextRevenue.minus(nextSpending);
   const sovereignRiskSpread = d(100).minus(x.creditScore).div(100).mul("0.04");
   const debtInterestRate = clamp(x.policyRate.mul("0.35").plus(sovereignRiskSpread), 0, "0.12");
@@ -495,36 +567,61 @@ export function calculateEconomy(
     x.nationalDebt.mul(debtInterestRate),
     Decimal.max(0, x.nominalGdp).mul("0.12"),
   );
-  const nextDebt = Decimal.max(0, x.nationalDebt.minus(fiscalBalance).plus(debtInterest));
+  const nextDebt = Decimal.max(
+    0,
+    x.nationalDebt
+      .minus(flowForPeriod(fiscalBalance, period))
+      .plus(flowForPeriod(debtInterest, period)),
+  );
   const debtToGdp = nextNominalGdp.isZero() ? d(0) : nextDebt.div(nextNominalGdp);
 
   const nextIncomeGini = clamp(
     x.incomeGini
       .plus(nextUnemployment.minus(x.unemploymentRate).mul("0.08"))
-      .minus(spendingGrowth.mul("0.01")),
+      .minus(flowForPeriod(spendingGrowth.mul("0.01"), period)),
     "0",
     "1",
   );
-  const nextWealthGini = clamp(x.wealthGini.plus(x.landPriceGrowth.mul("0.015")), "0", "1");
+  const nextWealthGini = clamp(
+    x.wealthGini.plus(flowForPeriod(x.landPriceGrowth.mul("0.015"), period)),
+    "0",
+    "1",
+  );
   const nextLandPriceGrowth = clamp(
-    x.landPriceGrowth.mul("0.55").plus(growth.mul("0.35")).minus(realRate.mul("0.18")),
+    lerpPeriod(
+      x.landPriceGrowth,
+      clamp(
+        x.landPriceGrowth.mul("0.55").plus(growth.mul("0.35")).minus(realRate.mul("0.18")),
+        "-0.5",
+        "0.8",
+      ),
+      period,
+    ),
     "-0.5",
     "0.8",
   );
   const nextCurrentAccount = clamp(
-    x.currentAccountToGdp
-      .mul("0.65")
-      .minus(outputGap.mul("0.18"))
-      .plus(d(1).div(x.currencyValue).minus(1).mul("0.02"))
-      .plus(x.externalShock.mul("0.25")),
+    lerpPeriod(
+      x.currentAccountToGdp,
+      clamp(
+        x.currentAccountToGdp
+          .mul("0.65")
+          .minus(outputGap.mul("0.18"))
+          .plus(d(1).div(x.currencyValue).minus(1).mul("0.02"))
+          .plus(x.externalShock.mul("0.25")),
+        "-0.3",
+        "0.3",
+      ),
+      period,
+    ),
     "-0.3",
     "0.3",
   );
   const nextReserves = Decimal.max(
     0,
     x.foreignReserves
-      .plus(nextNominalGdp.mul(nextCurrentAccount))
-      .plus(x.externalShock.mul(nextNominalGdp)),
+      .plus(flowForPeriod(nextNominalGdp.mul(nextCurrentAccount), period))
+      .plus(flowForPeriod(x.externalShock.mul(nextNominalGdp), period)),
   );
   const marketCurrencyValue = x.currencyValue.mul(
     d(1)
@@ -532,38 +629,45 @@ export function calculateEconomy(
       .plus(x.creditScore.minus(50).div(5000))
       .minus(nextInflation.minus("0.02").mul("0.12")),
   );
-  const nextCurrencyValue = Decimal.max(
+  const annualCurrencyValue = Decimal.max(
     "0.000001",
     marketCurrencyValue.plus(d(1).minus(marketCurrencyValue).mul("0.02")),
   );
-  const nextCreditScore = clamp(
-    x.creditScore
-      .plus(reserveCover.mul(4))
-      .minus(debtToGdp.mul(7))
-      .plus(growth.mul(15))
-      .plus(x.financialHealth.minus(50).div(20)),
-    0,
-    100,
-  );
+  const nextCurrencyValue =
+    period.eq(1) || x.currencyValue.lte(0)
+      ? annualCurrencyValue
+      : Decimal.max(
+          "0.000001",
+          x.currencyValue.mul(annualCurrencyValue.div(x.currencyValue).pow(period)),
+        );
+  const creditDrift = reserveCover
+    .mul(4)
+    .minus(debtToGdp.mul(7))
+    .plus(growth.mul(15))
+    .plus(x.financialHealth.minus(50).div(20));
+  const nextCreditScore = clamp(x.creditScore.plus(flowForPeriod(creditDrift, period)), 0, 100);
   const inflationGap = nextInflation.minus("0.02");
   const policyTarget = d("0.02")
     .plus(nextInflation)
     .plus(inflationGap.mul("0.8"))
     .plus(outputGap.mul("0.4"));
   const nextPolicyRate = clamp(
-    x.policyRate.mul("0.55").plus(policyTarget.mul("0.45")),
+    lerpPeriod(
+      x.policyRate,
+      clamp(x.policyRate.mul("0.55").plus(policyTarget.mul("0.45")), "-0.02", "0.35"),
+      period,
+    ),
     "-0.02",
     "0.35",
   );
+  const productivityRate = x.researchInvestmentRate
+    .mul("0.06")
+    .plus(x.structuralReform.mul("0.1"))
+    .plus(researchCapacitySignal.mul("0.012"))
+    .plus(industrialCapitalSignal.mul("0.006"));
   const nextProductivity = Decimal.max(
     "0.000001",
-    x.productivityIndex.mul(
-      d(1)
-        .plus(x.researchInvestmentRate.mul("0.06"))
-        .plus(x.structuralReform.mul("0.1"))
-        .plus(researchCapacitySignal.mul("0.012"))
-        .plus(industrialCapitalSignal.mul("0.006")),
-    ),
+    x.productivityIndex.mul(growthFactor(productivityRate, period)),
   );
   const industrialCapitalGrowth = clamp(
     x.publicInvestmentRate
@@ -577,7 +681,7 @@ export function calculateEconomy(
   );
   const nextIndustrialCapitalStock = Decimal.max(
     "0.000001",
-    x.industrialCapitalStockIndex.mul(d(1).plus(industrialCapitalGrowth)),
+    x.industrialCapitalStockIndex.mul(growthFactor(industrialCapitalGrowth, period)),
   );
   const researchCapacityGrowth = clamp(
     x.researchInvestmentRate
@@ -590,11 +694,11 @@ export function calculateEconomy(
   );
   const nextResearchCapacity = Decimal.max(
     "0.000001",
-    x.researchCapacityIndex.mul(d(1).plus(researchCapacityGrowth)),
+    x.researchCapacityIndex.mul(growthFactor(researchCapacityGrowth, period)),
   );
-  const productivityGrowth = nextProductivity
-    .div(Decimal.max(x.productivityIndex, "0.000001"))
-    .minus(1);
+  const productivityGrowth = period.eq(1)
+    ? nextProductivity.div(Decimal.max(x.productivityIndex, "0.000001")).minus(1)
+    : productivityRate;
   const agriculturalProductivityGrowth = clamp(
     x.researchInvestmentRate
       .mul("0.035")
@@ -607,13 +711,21 @@ export function calculateEconomy(
   );
   const nextAgriculturalProductivity = Decimal.max(
     "0.000001",
-    x.agriculturalProductivityIndex.mul(d(1).plus(agriculturalProductivityGrowth)),
+    x.agriculturalProductivityIndex.mul(growthFactor(agriculturalProductivityGrowth, period)),
   );
   const nextFoodSelfSufficiency = clamp(
-    x.foodSelfSufficiency
-      .plus(agriculturalProductivityGrowth.mul("0.55"))
-      .minus(populationGrowth.mul("0.25"))
-      .plus(x.externalShock.mul("0.08")),
+    period.eq(1)
+      ? x.foodSelfSufficiency
+          .plus(agriculturalProductivityGrowth.mul("0.55"))
+          .minus(populationGrowth.mul("0.25"))
+          .plus(x.externalShock.mul("0.08"))
+      : x.foodSelfSufficiency.plus(
+          agriculturalProductivityGrowth
+            .mul("0.55")
+            .minus(populationGrowth.mul("0.25"))
+            .plus(x.externalShock.mul("0.08"))
+            .mul(period),
+        ),
     "0",
     "2",
   );
@@ -627,7 +739,15 @@ export function calculateEconomy(
     "0.01",
     "0.8",
   );
-  const nextPovertyRate = clamp(x.povertyRate.mul("0.55").plus(povertyTarget.mul("0.45")), 0, 1);
+  const nextPovertyRate = clamp(
+    lerpPeriod(
+      x.povertyRate,
+      clamp(x.povertyRate.mul("0.55").plus(povertyTarget.mul("0.45")), 0, 1),
+      period,
+    ),
+    0,
+    1,
+  );
 
   return {
     rulesVersion: `${rules.version}:nonlinear-v3.1-stable`,
@@ -642,7 +762,7 @@ export function calculateEconomy(
     wealth: nextWealth.toFixed(4),
     foreignReserves: nextReserves.toFixed(4),
     currencyValue: nextCurrencyValue.toSignificantDigits(12).toString(),
-    creditScore: nextCreditScore.toDecimalPlaces(0).toNumber(),
+    creditScore: nextCreditScore.toDecimalPlaces(4).toNumber(),
     incomeGini: nextIncomeGini.toSignificantDigits(12).toString(),
     wealthGini: nextWealthGini.toSignificantDigits(12).toString(),
     inflationRate: nextInflation.toSignificantDigits(12).toString(),
@@ -683,4 +803,71 @@ export function calculateEconomy(
       ],
     },
   };
+}
+
+type EconomyStepResult = ReturnType<typeof stepEconomy>;
+
+/** 한 계산 구간이 끝난 상태를 다음 구간의 입력으로 넘긴다. 지출 증가율(연율)은 유지한다. */
+function economyInputAfterStep(input: EconomyInput, result: EconomyStepResult): EconomyInput {
+  const spendingGrowth = d(result.governmentSpendingGrowth);
+  const spendingBase = d(1).plus(spendingGrowth);
+  return {
+    ...input,
+    population: result.population,
+    populationGrowthRate: result.populationGrowthRate,
+    realGdp: result.realGdp,
+    nominalGdp: result.nominalGdp,
+    realGdpGrowth: result.realGdpGrowth,
+    gdpDeflator: result.gdpDeflator,
+    realGni: result.realGni,
+    realGnp: result.realGnp,
+    wealth: result.wealth,
+    foreignReserves: result.foreignReserves,
+    currencyValue: result.currencyValue,
+    creditScore: String(result.creditScore),
+    incomeGini: result.incomeGini,
+    wealthGini: result.wealthGini,
+    inflationRate: result.inflationRate,
+    landPriceGrowth: result.landPriceGrowth,
+    unemploymentRate: result.unemploymentRate,
+    governmentRevenue: result.governmentRevenue,
+    governmentSpending: result.governmentSpending,
+    previousGovernmentSpending: spendingBase.lte(0)
+      ? result.governmentSpending
+      : d(result.governmentSpending).div(spendingBase).toString(),
+    nationalDebt: result.nationalDebt,
+    policyRate: result.policyRate,
+    currentAccountToGdp: result.currentAccountToGdp,
+    productivityIndex: result.productivityIndex,
+    povertyRate: result.povertyRate,
+    agriculturalProductivityIndex: result.agriculturalProductivityIndex,
+    foodSelfSufficiency: result.foodSelfSufficiency,
+    industrialCapitalStockIndex: result.industrialCapitalStockIndex,
+    researchCapacityIndex: result.researchCapacityIndex,
+  };
+}
+
+/**
+ * 거시 경제를 한 턴만큼 진행한다.
+ *
+ * 계수는 연간 기준이다. 분기 턴이면 연간 변화율을 0.25년만큼 반영하고,
+ * 2년 턴이면 1년씩 두 번 계산한다. 성장률·물가·금리 같은 비율 지표는 연율로 저장한다.
+ */
+export function calculateEconomy(
+  input: EconomyInput,
+  rules = DEFAULT_ECONOMY_RULES,
+  structural: EconomyStructuralAdjustments = {},
+  options: EconomyPeriodOptions = {},
+) {
+  const period = normalizePeriod(options.periodYears);
+  const steps = Math.max(1, Math.round(period.toNumber()));
+  const stepPeriod = steps === 1 ? period : period.div(steps);
+  const spendingGap = normalizePeriod(options.spendingGrowthPeriodYears);
+  let stepInput = input;
+  let result = stepEconomy(stepInput, rules, structural, stepPeriod, spendingGap);
+  for (let step = 1; step < steps; step += 1) {
+    stepInput = economyInputAfterStep(stepInput, result);
+    result = stepEconomy(stepInput, rules, structural, stepPeriod, d(1));
+  }
+  return { ...result, periodYears: period.toString() };
 }

@@ -5,6 +5,7 @@ import { useActionState, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { FormState } from "@/src/actions/auth";
 import { applyForCountryAction } from "@/src/actions/country";
 import { CountryFlag } from "./country-flag";
+import { formatMetric } from "./metric-format";
 import {
   COUNTRY_ENTITY_TYPE_LABELS,
   type CountryEntityType,
@@ -866,7 +867,9 @@ export function CountrySelectGlobe({
               </div>
               <div>
                 <dt>안정도</dt>
-                <dd>{selected.stability == null ? "미상" : `${selected.stability}%`}</dd>
+                <dd>
+                  {selected.stability == null ? "미상" : `${formatMetric(selected.stability)}%`}
+                </dd>
               </div>
             </dl>
           </section>

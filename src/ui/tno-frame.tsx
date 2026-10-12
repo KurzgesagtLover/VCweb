@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CountryFlag } from "./country-flag";
+import { formatMetric } from "./metric-format";
 
 export type TnoWindowTab = { label: string; href: string; active: boolean };
 
@@ -138,7 +139,7 @@ export function TnoGauges({
               <i className={tone} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
             </div>
             <b>
-              {item.value === null ? "—" : value}
+              {item.value === null ? "—" : formatMetric(value)}
               {item.suffix ?? ""}
             </b>
           </div>
