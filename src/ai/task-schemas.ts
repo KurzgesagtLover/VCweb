@@ -21,6 +21,16 @@ export const turnEventSchema = z.object({
         description: z.string().min(1).max(1000),
         expectedEffect: z.string().min(1).max(1000),
         effects: z.array(effectSchema).max(8),
+        /** 선택 시 붙는 국가정신(제공된 템플릿 키만). 없으면 빈 배열 */
+        spirits: z
+          .array(
+            z.object({
+              templateKey: z.string().min(1).max(64),
+              durationMonths: z.number().int().min(1).max(60).nullable(),
+            }),
+          )
+          .max(2)
+          .default([]),
       }),
     )
     .min(2)
@@ -44,7 +54,7 @@ export const turnEventJsonSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["label", "description", "expectedEffect", "effects"],
+        required: ["label", "description", "expectedEffect", "effects", "spirits"],
         properties: {
           label: { type: "string" },
           description: { type: "string" },
@@ -73,6 +83,21 @@ export const turnEventJsonSchema = {
                   anyOf: [{ type: "integer", minimum: 1, maximum: 12 }, { type: "null" }],
                 },
                 reason: { type: "string" },
+              },
+            },
+          },
+          spirits: {
+            type: "array",
+            maxItems: 2,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["templateKey", "durationMonths"],
+              properties: {
+                templateKey: { type: "string" },
+                durationMonths: {
+                  anyOf: [{ type: "integer", minimum: 1, maximum: 60 }, { type: "null" }],
+                },
               },
             },
           },

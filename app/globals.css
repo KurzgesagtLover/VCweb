@@ -11218,3 +11218,71 @@ body:has(.globe-stage) .sidebar {
   gap: 0.15rem;
   font-size: 0.7rem;
 }
+
+/* 국가정신 */
+.spirit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.5rem;
+}
+.spirit-card {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--tno-line-soft);
+  background: #05080a;
+}
+.spirit-card[data-category="WORLD"] {
+  border-color: #f2c14b55;
+}
+.spirit-card header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.spirit-card header span {
+  color: var(--tno-cyan);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+}
+.spirit-card header strong {
+  font-size: 0.82rem;
+}
+.spirit-card header em {
+  color: #f2c14b;
+  font-size: 0.62rem;
+  font-style: normal;
+}
+.spirit-card p {
+  margin: 0;
+  color: #c3ced2;
+  font-size: 0.7rem;
+}
+.spirit-card small {
+  color: #8d999e;
+  font-size: 0.62rem;
+}
+.admin-spirit-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  list-style: none;
+}
+.admin-spirit-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+.admin-spirit-list li > div {
+  display: grid;
+  gap: 0.1rem;
+}
+.admin-spirit-list span,
+.admin-spirit-list small {
+  color: var(--muted, #8d999e);
+  font-size: 0.75rem;
+}

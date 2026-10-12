@@ -5,6 +5,8 @@ import { getGovernmentStructure } from "@/src/db/queries/government";
 import { getViewerContext } from "@/src/db/queries/viewer";
 import { governmentBranchLabel, metricLabel } from "@/src/domain/display-labels";
 import { getLawBoard } from "@/src/services/laws";
+import { getSpiritPanel } from "@/src/services/spirits";
+import { NationalSpiritsPanel } from "@/src/ui/national-spirits-panel";
 import { getPoliticalPowerState } from "@/src/services/political-power";
 import { formatMoney, formatPercent } from "@/src/ui/format";
 import { formatMetric, roundedMetric } from "@/src/ui/metric-format";
@@ -27,9 +29,10 @@ import { PoliticalPowerTicker } from "@/src/ui/political-power-ticker";
 
 export const metadata = { title: "정치" };
 
-type PoliticsTab = "overview" | "laws" | "personnel" | "assembly" | "replace";
+type PoliticsTab = "overview" | "spirits" | "laws" | "personnel" | "assembly" | "replace";
 const TABS: Array<[PoliticsTab, string]> = [
   ["overview", "정치 현황"],
+  ["spirits", "국가정신"],
   ["laws", "법·제도"],
   ["personnel", "권력기관 인사"],
   ["assembly", "국회·정당"],
@@ -381,6 +384,14 @@ export default async function PoliticsPage({
   ]);
   if (!ledger) return null;
   const politics = ledger.political;
+  const spiritPanel =
+    activeTab === "spirits"
+      ? await getSpiritPanel({
+          campaignId: context.campaign.id,
+          countryId: context.country.id,
+          currentGameDate: context.turn?.gameDateStart ?? null,
+        })
+      : null;
   const lawBoard =
     activeTab === "laws"
       ? await getLawBoard({
@@ -425,6 +436,11 @@ export default async function PoliticsPage({
       />
 
       {activeTab === "overview" && <OverviewView ledger={ledger} politicalPower={politicalPower} />}
+      {activeTab === "spirits" && spiritPanel && (
+        <TnoPlate title="국가정신" wide>
+          <NationalSpiritsPanel panel={spiritPanel} />
+        </TnoPlate>
+      )}
       {activeTab === "laws" && lawBoard && <PoliticalLawsView board={lawBoard} />}
       {activeTab === "personnel" && <PersonnelView structure={structure} />}
       {activeTab === "assembly" && <AssemblyView ledger={ledger} />}

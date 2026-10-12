@@ -449,6 +449,8 @@ export const eventOptions = pgTable(
     description: text("description").notNull(),
     expectedEffect: text("expected_effect").notNull(),
     effects: jsonb("effects").$type<DomainEffect[]>().notNull(),
+    /** 선택 시 붙이거나 떼는 국가정신: [{ action, templateKey, durationMonths }] */
+    spirits: jsonb("spirits").$type<Array<Record<string, unknown>>>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("event_options_event_order_uidx").on(table.eventId, table.order)],

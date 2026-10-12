@@ -21,6 +21,7 @@ import {
   latestPoliticalSnapshot,
   type Reader,
 } from "./country-state";
+import { countrySpiritEffects } from "./spirits";
 
 export type BudgetEconomicInput = {
   realGdp: string;
@@ -61,6 +62,7 @@ export function budgetFromSnapshots(input: {
   allocation: BudgetAllocation;
   lawStages: LawStages;
   threats: { atWar: boolean; threats: number };
+  needModifiers?: BudgetContext["needModifiers"];
 }) {
   if (!input.economic || !input.demographic) return null;
   const nominalGdp = new Decimal(input.economic.nominalGdp);
@@ -94,6 +96,7 @@ export function budgetFromSnapshots(input: {
     threats: input.threats.threats,
     conscriptionStage: input.lawStages.conscriptionLaw ?? null,
     economyLawStage: input.lawStages.economyLaw ?? null,
+    needModifiers: input.needModifiers ?? {},
   };
   const evaluation = evaluateBudget(context, input.allocation);
   return {
@@ -111,30 +114,33 @@ export async function evaluateCountryBudget(
   reader: Reader,
   country: { id: string; campaignId: string; economicSystem: string | null },
 ) {
-  const [economic, demographic, political, fiscal, lawStages, threats] = await Promise.all([
-    reader
-      .select({ snapshot: economicSnapshots })
-      .from(economicSnapshots)
-      .innerJoin(turns, eq(economicSnapshots.turnId, turns.id))
-      .where(eq(economicSnapshots.countryId, country.id))
-      .orderBy(desc(turns.sequence))
-      .limit(1),
-    reader
-      .select({ snapshot: demographicSnapshots })
-      .from(demographicSnapshots)
-      .innerJoin(turns, eq(demographicSnapshots.turnId, turns.id))
-      .where(eq(demographicSnapshots.countryId, country.id))
-      .orderBy(desc(turns.sequence))
-      .limit(1),
-    latestPoliticalSnapshot(reader, country.id),
-    reader
-      .select()
-      .from(countryFiscalPolicies)
-      .where(eq(countryFiscalPolicies.countryId, country.id))
-      .limit(1),
-    getCountryLawStages(reader, country),
-    getCountryThreats(reader, country.campaignId, country.id),
-  ]);
+  const [economic, demographic, political, fiscal, lawStages, threats, spirits] = await Promise.all(
+    [
+      reader
+        .select({ snapshot: economicSnapshots })
+        .from(economicSnapshots)
+        .innerJoin(turns, eq(economicSnapshots.turnId, turns.id))
+        .where(eq(economicSnapshots.countryId, country.id))
+        .orderBy(desc(turns.sequence))
+        .limit(1),
+      reader
+        .select({ snapshot: demographicSnapshots })
+        .from(demographicSnapshots)
+        .innerJoin(turns, eq(demographicSnapshots.turnId, turns.id))
+        .where(eq(demographicSnapshots.countryId, country.id))
+        .orderBy(desc(turns.sequence))
+        .limit(1),
+      latestPoliticalSnapshot(reader, country.id),
+      reader
+        .select()
+        .from(countryFiscalPolicies)
+        .where(eq(countryFiscalPolicies.countryId, country.id))
+        .limit(1),
+      getCountryLawStages(reader, country),
+      getCountryThreats(reader, country.campaignId, country.id),
+      countrySpiritEffects(reader, country.id),
+    ],
+  );
   return budgetFromSnapshots({
     economic: economic[0]?.snapshot ?? null,
     demographic: demographic[0]?.snapshot ?? null,
@@ -142,6 +148,7 @@ export async function evaluateCountryBudget(
     allocation: fiscalAllocation(fiscal[0] ?? null),
     lawStages,
     threats,
+    needModifiers: spirits.combined.budgetNeed,
   });
 }
 

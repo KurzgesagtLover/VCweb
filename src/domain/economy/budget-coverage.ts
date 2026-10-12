@@ -73,6 +73,8 @@ export type BudgetContext = {
   conscriptionStage: number | null;
   /** 경제법 단계(1 자유방임 ~ 5 중앙계획). 모르면 null */
   economyLawStage: number | null;
+  /** 국가정신 등이 거는 부문별 필요 비중 배율 보정(+0.3이면 1.3배) */
+  needModifiers?: Partial<Record<BudgetSectorKey, number>>;
 };
 
 export type BudgetRequirement = {
@@ -496,12 +498,32 @@ export type BudgetLineEvaluation = {
   tier: BudgetTier;
 };
 
+/** 필요 비중에 배율 보정을 건다. 결과는 1%~80% 사이로 묶는다. */
+function adjustRequirement(
+  requirementValue: BudgetRequirement,
+  modifier: number,
+  spendingToGdp: Decimal.Value,
+): BudgetRequirement {
+  if (!Number.isFinite(modifier) || modifier === 0) return requirementValue;
+  const factor = d(1).plus(Math.max(-0.9, modifier));
+  const share = clampDecimal(d(requirementValue.budgetShare).mul(factor), "0.01", "0.8");
+  return {
+    budgetShare: tidy(share),
+    gdpShare: tidy(share.mul(d(spendingToGdp || 0))),
+    factors: { ...requirementValue.factors, modifiers: tidy(factor) },
+  };
+}
+
 export function evaluateBudgetLine(
   line: BudgetSectorKey,
   context: BudgetContext,
   allocatedPercent: number,
 ): BudgetLineEvaluation {
-  const requirementValue = budgetRequirement(line, context);
+  const requirementValue = adjustRequirement(
+    budgetRequirement(line, context),
+    context.needModifiers?.[line] ?? 0,
+    context.spendingToGdp,
+  );
   const allocatedShare = d(Number.isFinite(allocatedPercent) ? allocatedPercent : 0).div(100);
   const required = d(requirementValue.budgetShare);
   const coverage = required.gt(0) ? allocatedShare.div(required) : null;

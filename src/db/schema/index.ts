@@ -9,6 +9,7 @@ export * from "./laws";
 export * from "./operations";
 export * from "./research";
 export * from "./simulation";
+export * from "./spirits";
 export * from "./superevents";
 export * from "./world";
 export * from "./world-mechanics";

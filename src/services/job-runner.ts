@@ -48,6 +48,7 @@ import { isPolicyMetric, metricValue } from "@/src/domain/policy/metrics";
 import { applyMonthlyDrifts, roundPoliticalMetric } from "@/src/domain/politics/drift";
 import { turnPeriod, yearsBetweenTurnEnds } from "@/src/domain/turn/period";
 import { advanceDemography, roundAgeStructure } from "@/src/domain/demography/age-structure";
+import { parseSpiritChanges, spiritTemplateCatalog } from "@/src/domain/spirits/model";
 import {
   calculatePolicyEffectiveness,
   calculatePoliticalState,
@@ -1064,6 +1065,9 @@ async function handleTurnEvent(job: JobRow) {
     economicState: workspace?.afterEconomic ?? {},
     politicalState: workspace?.afterPolitical ?? {},
     turnContext,
+    spiritTemplates: spiritTemplateCatalog(),
+    spiritNote:
+      "선택지의 spirits에는 spiritTemplates의 key만 쓸 수 있다. 선택 결과가 오래 남는 사회적·정치적 분위기를 만들 때만 0~1개 붙이고, 대부분은 빈 배열로 둔다. durationMonths가 null이면 템플릿 기본 기간이다.",
   };
   const run = await startTaskRun(job, "TURN_EVENT", `${countryId}:${job.turnId}`, payload);
   try {
@@ -1077,6 +1081,9 @@ async function handleTurnEvent(job: JobRow) {
       effects: validateEffects(option.effects)
         .filter((item) => item.valid && item.effect)
         .map((item) => item.effect!),
+      spirits: parseSpiritChanges(
+        (option.spirits ?? []).map((spirit) => ({ ...spirit, action: "GRANT" })),
+      ),
     }));
     await db.transaction(async (tx) => {
       const [event] = await tx
@@ -1106,6 +1113,7 @@ async function handleTurnEvent(job: JobRow) {
           description: option.description,
           expectedEffect: option.expectedEffect,
           effects: option.effects,
+          spirits: option.spirits,
         })),
       );
     });

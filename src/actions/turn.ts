@@ -50,6 +50,8 @@ import { roundPoliticalMetric } from "@/src/domain/politics/drift";
 import { applyCountryDevelopmentDeltas } from "@/src/services/development-tracks";
 import { settleCountryPoliticalPower } from "@/src/services/laws";
 import { settleWorldMechanics } from "@/src/services/world-mechanics";
+import { applySpiritChanges, expireSpirits } from "@/src/services/spirits";
+import { parseSpiritChanges } from "@/src/domain/spirits/model";
 
 function requireConfirmation(formData: FormData) {
   if (formData.get("confirm") !== "yes")
@@ -593,6 +595,20 @@ export async function publishTurnCore(
       .where(eq(turnCountryWorkspaces.turnId, turn.id));
     await applyCountryDevelopmentDeltas(tx, developmentDeltas);
     await settleWorldMechanics(tx, { campaign, turn, now: publishedAt });
+    // 기간이 끝난 국가정신을 먼저 내리고, 이번 턴 사건 선택이 붙이는 국가정신은 다음 턴부터 적용한다.
+    await expireSpirits(tx, { campaignId: campaign.id, turn });
+    for (const { choice, option } of choices) {
+      const changes = parseSpiritChanges(option.spirits);
+      if (!changes.length) continue;
+      await applySpiritChanges(tx, {
+        campaignId: campaign.id,
+        countryId: choice.countryId,
+        turn,
+        changes,
+        sourceType: "EVENT",
+        sourceId: choice.id,
+      });
+    }
     for (const workspace of workspaceRows) {
       const economic = { ...workspace.afterEconomic } as Record<string, unknown>;
       const demographic = { ...workspace.afterDemographic } as Record<string, unknown>;

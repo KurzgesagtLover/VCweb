@@ -60,6 +60,7 @@ import {
   latestPoliticalSnapshot,
 } from "./country-state";
 import { getPoliticalPowerState, lockAndAccruePoliticalPower } from "./political-power";
+import { countrySpiritEffects, spiritIncomeFromEvidence } from "./spirits";
 import { loadWorldEffects } from "./world-mechanics";
 
 type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -197,7 +198,7 @@ export async function loadCalculationSystems(input: {
   unrest: number;
   fiscal: Parameters<typeof fiscalAllocation>[0];
 }) {
-  const [stages, commitments, threats, world] = await Promise.all([
+  const [stages, commitments, threats, world, spirits] = await Promise.all([
     getCountryLawStages(db, input.country),
     db
       .select()
@@ -211,6 +212,7 @@ export async function loadCalculationSystems(input: {
       ),
     getCountryThreats(db, input.country.campaignId, input.country.id),
     loadWorldEffects(db, input.country.campaignId),
+    countrySpiritEffects(db, input.country.id, input.turn.gameDateEnd),
   ]);
   const lawEffects = lawStructuralEffects(stages);
   const culturalDrift = addDrifts(
@@ -223,14 +225,17 @@ export async function loadCalculationSystems(input: {
     allocation: fiscalAllocation(input.fiscal),
     lawStages: stages,
     threats,
+    needModifiers: spirits.combined.budgetNeed,
   });
   const budgetStructural = budget?.evaluation.structural;
   const worldStructural = world.effects.structural;
+  const spiritStructural = spirits.combined.structural;
   const drift = addDrifts(
     lawEffects.drift,
     budget?.evaluation.drift ?? {},
     culturalDrift,
     world.effects.drift,
+    spirits.combined.drift,
   );
   const sum = (...values: Array<Decimal.Value | undefined>) =>
     values.reduce<Decimal>((total, value) => total.plus(value ?? 0), new Decimal(0)).toString();
@@ -241,6 +246,7 @@ export async function loadCalculationSystems(input: {
     threats,
     budget,
     world,
+    spirits,
     drift,
     months: monthsInTurn(input.turn.gameDateStart, input.turn.gameDateEnd),
     structural: {
@@ -248,20 +254,24 @@ export async function loadCalculationSystems(input: {
         lawEffects.potentialGrowth,
         budgetStructural?.potentialGrowth,
         worldStructural.potentialGrowth,
+        spiritStructural.potentialGrowth,
       ),
       naturalUnemployment: sum(
         lawEffects.naturalUnemployment,
         budgetStructural?.naturalUnemployment,
         worldStructural.naturalUnemployment,
+        spiritStructural.naturalUnemployment,
       ),
       inflationPressure: sum(
         lawEffects.inflationPressure,
         budgetStructural?.inflationPressure,
         worldStructural.inflationPressure,
+        spiritStructural.inflationPressure,
       ),
       revenueEfficiency: sum(
         budgetStructural?.revenueEfficiency,
         worldStructural.revenueEfficiency,
+        spiritStructural.revenueEfficiency,
       ),
     },
   };
@@ -283,6 +293,18 @@ export function calculationSystemsEvidence(
     driftChanges,
     threats: { atWar: systems.threats.atWar, threats: systems.threats.threats },
     budget,
+    spirits: {
+      politicalPowerIncome: systems.spirits.combined.politicalPowerIncome,
+      drift: systems.spirits.combined.drift,
+      structural: systems.spirits.combined.structural,
+      budgetNeed: systems.spirits.combined.budgetNeed,
+      list: systems.spirits.spirits.map(({ spirit, effects }) => ({
+        id: spirit.id,
+        key: spirit.spiritKey,
+        name: spirit.name,
+        politicalPowerIncome: effects.politicalPowerIncome ?? 0,
+      })),
+    },
     world: {
       spirits: systems.world.effects.spirits,
       drift: systems.world.effects.drift,
@@ -513,13 +535,14 @@ export async function settleCountryPoliticalPower(
   const upkeep = upkeepItems.reduce((sum, item) => sum.plus(item.upkeep), new Decimal(0));
   const incomeModifierTotal = await activeIncomeModifierTotal(tx, countryId, turn.sequence);
   const budgetIncome = budgetIncomeFromEvidence(input.evidence);
+  const spiritIncome = spiritIncomeFromEvidence(input.evidence);
   const income = calculatePoliticalPowerIncome({
     legitimacy: Number(political.legitimacy ?? 50),
     stability: Number(political.stability ?? 50),
     governmentApproval: Number(political.governmentApproval ?? 50),
     stateCapacity: Number(political.stateCapacity ?? 50),
     corruption: Number(political.corruption ?? 0),
-    modifiers: incomeModifierTotal.plus(budgetIncome.income),
+    modifiers: incomeModifierTotal.plus(budgetIncome.income).plus(spiritIncome.income),
   });
   const net = income.total.minus(upkeep);
   const finalBalance = balance.toDecimalPlaces(4);
@@ -548,6 +571,7 @@ export async function settleCountryPoliticalPower(
         income: income.components,
         incomeModifiers: incomeModifierTotal.toString(),
         budget: budgetIncome,
+        spirits: spiritIncome,
         upkeep: upkeepItems,
         oneTimePower: oneTimePower.toString(),
         appliedOrders,
@@ -844,29 +868,31 @@ export async function getLawBoard(input: {
   turn: Turn | null;
 }) {
   const power = await getPoliticalPowerState(input.country.id, input.campaign);
-  const [stages, changes, lastTurnEnds, political, atWar, ledgerRows, budget] = await Promise.all([
-    getCountryLawStages(db, input.country),
-    db
-      .select()
-      .from(countryLawChanges)
-      .where(
-        and(
-          eq(countryLawChanges.countryId, input.country.id),
-          inArray(countryLawChanges.status, ["PENDING", "ACTIVE"]),
+  const [stages, changes, lastTurnEnds, political, atWar, ledgerRows, budget, spirits] =
+    await Promise.all([
+      getCountryLawStages(db, input.country),
+      db
+        .select()
+        .from(countryLawChanges)
+        .where(
+          and(
+            eq(countryLawChanges.countryId, input.country.id),
+            inArray(countryLawChanges.status, ["PENDING", "ACTIVE"]),
+          ),
         ),
-      ),
-    lastAppliedTurnEnds(db, input.country.id),
-    latestPolitical(db, input.country.id),
-    isCountryAtWar(db, input.campaign.id, input.country.id),
-    db
-      .select({ ledger: politicalPowerLedger, sequence: turns.sequence })
-      .from(politicalPowerLedger)
-      .innerJoin(turns, eq(politicalPowerLedger.turnId, turns.id))
-      .where(eq(politicalPowerLedger.countryId, input.country.id))
-      .orderBy(desc(turns.sequence))
-      .limit(6),
-    evaluateCountryBudget(db, input.country),
-  ]);
+      lastAppliedTurnEnds(db, input.country.id),
+      latestPolitical(db, input.country.id),
+      isCountryAtWar(db, input.campaign.id, input.country.id),
+      db
+        .select({ ledger: politicalPowerLedger, sequence: turns.sequence })
+        .from(politicalPowerLedger)
+        .innerJoin(turns, eq(politicalPowerLedger.turnId, turns.id))
+        .where(eq(politicalPowerLedger.countryId, input.country.id))
+        .orderBy(desc(turns.sequence))
+        .limit(6),
+      evaluateCountryBudget(db, input.country),
+      countrySpiritEffects(db, input.country.id),
+    ]);
   const democracy = political?.democracy ?? 50;
   const entries: LawBoardEntry[] = LAW_DEFINITIONS.map((definition) => {
     const stage = stages[definition.key];
@@ -949,6 +975,14 @@ export async function getLawBoard(input: {
     ? await activeIncomeModifierTotal(db, input.country.id, input.turn.sequence)
     : new Decimal(0);
   const budgetIncome = budget?.evaluation.politicalPowerIncome ?? 0;
+  const spiritIncome = spirits.combined.politicalPowerIncome;
+  const spiritIncomeItems = spirits.spirits
+    .filter(({ effects }) => effects.politicalPowerIncome)
+    .map(({ spirit, effects }) => ({
+      key: spirit.spiritKey,
+      label: spirit.name,
+      income: effects.politicalPowerIncome ?? 0,
+    }));
   const budgetIncomeItems = (budget?.evaluation.lines ?? [])
     .filter((line) => line.tier.politicalPowerIncome)
     .map((line) => ({
@@ -963,7 +997,7 @@ export async function getLawBoard(input: {
         governmentApproval: political.governmentApproval,
         stateCapacity: political.stateCapacity,
         corruption: political.corruption,
-        modifiers: incomeModifierTotal.plus(budgetIncome),
+        modifiers: incomeModifierTotal.plus(budgetIncome).plus(spiritIncome),
       })
     : null;
 
@@ -976,6 +1010,7 @@ export async function getLawBoard(input: {
           incomeComponents: income.components,
           budgetIncome,
           budgetIncomeItems,
+          spiritIncomeItems,
           upkeep: upkeep.toString(),
           upkeepItems,
           net: income.total.minus(upkeep).toString(),

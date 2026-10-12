@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { updateCountryEconomicSystemAction } from "@/src/actions/country";
 import { adjustCountryDevelopmentAction } from "@/src/actions/development";
 import { setCountryLawStageAction } from "@/src/actions/laws";
+import { grantSpiritAction, removeSpiritAction } from "@/src/actions/spirits";
 import {
   createAdministrativeDivisionAction,
   reviewAdministrativeDivisionRequestAction,
@@ -13,6 +14,14 @@ import { administrativeDivisionRequests } from "@/src/db/schema";
 import { getCountryLedger } from "@/src/db/queries/country";
 import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
 import { LAW_CATEGORY_LABELS, LAW_DEFINITIONS } from "@/src/domain/politics/laws";
+import {
+  describeSpiritEffects,
+  parseSpiritEffects,
+  SPIRIT_SOURCE_LABELS,
+  SPIRIT_TEMPLATES,
+  type SpiritSource,
+} from "@/src/domain/spirits/model";
+import { activeCountrySpirits } from "@/src/services/spirits";
 import { getCountryLawStages } from "@/src/services/laws";
 import { DeleteCountryButton } from "@/src/ui/delete-country-button";
 import { DevelopmentTrackGrid } from "@/src/ui/development-tracks";
@@ -35,7 +44,10 @@ export default async function AdminCountryDetail({
     where: eq(administrativeDivisionRequests.countryId, countryId),
     orderBy: [desc(administrativeDivisionRequests.createdAt)],
   });
-  const lawStages = await getCountryLawStages(db, ledger.country);
+  const [lawStages, spirits] = await Promise.all([
+    getCountryLawStages(db, ledger.country),
+    activeCountrySpirits(db, countryId),
+  ]);
   const adm1Divisions = ledger.divisions.filter((division) => division.level === 1);
   const adm2Count = ledger.divisions.filter((division) => division.level === 2).length;
   return (
@@ -151,6 +163,112 @@ export default async function AdminCountryDetail({
         <p className="muted">
           관리자 변경은 정치력을 쓰지 않습니다. 시행을 기다리던 플레이어 변경은 환불하고 취소하며,
           적응 중이던 사회·문화 변경의 유지비도 끝납니다.
+        </p>
+      </section>
+      <section className="panel settings-panel">
+        <div className="panel-head">
+          <h2>국가정신</h2>
+        </div>
+        {spirits.length ? (
+          <ul className="admin-spirit-list">
+            {spirits.map((spirit) => (
+              <li key={spirit.id}>
+                <div>
+                  <strong>{spirit.name}</strong>
+                  <span>
+                    {SPIRIT_SOURCE_LABELS[spirit.sourceType as SpiritSource] ?? spirit.sourceType} ·{" "}
+                    {spirit.startsOn} ~ {spirit.endsOn ?? "해제 시까지"}
+                  </span>
+                  <small>
+                    {describeSpiritEffects(parseSpiritEffects(spirit.effects)).join(", ")}
+                  </small>
+                </div>
+                <form action={removeSpiritAction} className="inline-actions">
+                  <input type="hidden" name="countryId" value={countryId} />
+                  <input type="hidden" name="spiritKey" value={spirit.spiritKey} />
+                  <input name="reason" required minLength={3} maxLength={1000} placeholder="사유" />
+                  <button type="submit">떼기</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">붙어 있는 국가정신이 없습니다.</p>
+        )}
+        <form action={grantSpiritAction} className="form-grid">
+          <input type="hidden" name="countryId" value={countryId} />
+          <input type="hidden" name="mode" value="TEMPLATE" />
+          <label>
+            기본 국가정신
+            <select name="templateKey" required defaultValue="">
+              <option value="" disabled>
+                선택
+              </option>
+              {SPIRIT_TEMPLATES.map((template) => (
+                <option key={template.key} value={template.key}>
+                  {template.name} (
+                  {template.defaultDurationMonths
+                    ? `${template.defaultDurationMonths}개월`
+                    : "무기한"}
+                  )
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            기간(개월, 비우면 기본 · 0은 무기한)
+            <input name="durationMonths" inputMode="numeric" pattern="[0-9]*" />
+          </label>
+          <label>
+            사유
+            <input name="reason" required minLength={3} maxLength={1000} />
+          </label>
+          <div className="inline-actions">
+            <button type="submit">붙이기</button>
+          </div>
+        </form>
+        <form action={grantSpiritAction} className="form-grid">
+          <input type="hidden" name="countryId" value={countryId} />
+          <input type="hidden" name="mode" value="CUSTOM" />
+          <label className="full-width">
+            직접 만들기(JSON)
+            <textarea
+              name="custom"
+              rows={6}
+              required
+              defaultValue={JSON.stringify(
+                {
+                  key: "custom-spirit",
+                  name: "새 국가정신",
+                  description: "",
+                  category: "SPECIAL",
+                  effects: {
+                    drift: { stability: 0.05 },
+                    potentialGrowth: 0.001,
+                    politicalPowerIncome: 5,
+                    budgetNeed: { budgetDefense: 0.1 },
+                  },
+                },
+                null,
+                2,
+              )}
+            />
+          </label>
+          <label>
+            기간(개월, 0이나 빈칸은 무기한)
+            <input name="durationMonths" inputMode="numeric" pattern="[0-9]*" />
+          </label>
+          <label>
+            사유
+            <input name="reason" required minLength={3} maxLength={1000} />
+          </label>
+          <div className="inline-actions">
+            <button type="submit">직접 만든 국가정신 붙이기</button>
+          </div>
+        </form>
+        <p className="muted">
+          정치 지표 효과는 월간 증감, 경제 효과는 비율 보정, 정치력은 연간 수입, 예산은 부문별 필요
+          비중 배율입니다. 같은 키를 다시 붙이면 효과와 기간이 새 값으로 바뀝니다.
         </p>
       </section>
       <RememberedDisclosure storageKey={`admin-country-${countryId}`} title="전체 원장 보기">

@@ -174,6 +174,12 @@ export function PoliticalLawsView({ board }: { board: LawBoard }) {
                   <dd>{signed(item.income, 0)} 반영</dd>
                 </div>
               ))}
+              {preview.spiritIncomeItems.map((item) => (
+                <div key={`spirit-${item.key}`}>
+                  <dt>국가정신 · {item.label}</dt>
+                  <dd>{signed(item.income, 0)} 반영</dd>
+                </div>
+              ))}
             </dl>
           ) : (
             <p>정치 스냅샷이 공개된 뒤 계산됩니다.</p>
