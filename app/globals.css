@@ -11064,3 +11064,50 @@ body:has(.globe-stage) .sidebar {
 .tno-admin-coverage .tier-bloat {
   color: #f2c14b;
 }
+
+/* 부문별 예산 충족률 */
+.tno-budget-coverage ul {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tno-budget-coverage li {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) auto auto;
+  align-items: baseline;
+  gap: 0.15rem 0.6rem;
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--tno-line-soft);
+}
+.tno-budget-coverage li > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #d7e1e4;
+  font-size: 0.7rem;
+}
+.tno-budget-coverage li > span i {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+}
+.tno-budget-coverage li strong {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+.tno-budget-coverage li em {
+  grid-column: 1 / -1;
+  color: #a4b0b6;
+  font-size: 0.64rem;
+  font-style: normal;
+}
+@media (max-width: 640px) {
+  .tno-budget-coverage li {
+    grid-template-columns: 1fr auto;
+  }
+  .tno-budget-coverage li small {
+    grid-column: 1 / -1;
+  }
+}

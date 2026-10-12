@@ -12,7 +12,7 @@ import {
 } from "@/src/domain/economy/budget";
 import { ECONOMY_STATISTICS_CURRENCY } from "@/src/domain/economy/currency";
 import { buildCompanyClassStatistics } from "@/src/domain/economy/company";
-import { evaluateCountryAdministration } from "@/src/services/laws";
+import { evaluateCountryBudget } from "@/src/services/budget";
 import { TnoEconomyWindow } from "@/src/ui/tno-economy-window";
 
 export const metadata = { title: "경제" };
@@ -21,9 +21,9 @@ export default async function EconomyPage() {
   const session = await requireSession();
   const context = await getViewerContext(session.user.id);
   if (!context.country) return null;
-  const [ledger, administration] = await Promise.all([
+  const [ledger, budgetState] = await Promise.all([
     getCountryLedger(context.country.id),
-    evaluateCountryAdministration(db, context.country.id),
+    evaluateCountryBudget(db, context.country),
   ]);
   if (!ledger) return null;
 
@@ -261,12 +261,16 @@ export default async function EconomyPage() {
         allocation: budgetAllocation,
       }}
       perCapitaGdp={perCapitaGdp}
-      administration={
-        administration
+      budgetCoverage={
+        budgetState
           ? {
-              requiredGdpShare: administration.requirement.gdpShare,
-              requiredBudgetShare: administration.requirement.budgetShare,
-              spendingToGdp: administration.spendingToGdp,
+              spendingToGdp: budgetState.spendingToGdp,
+              totalRequiredShare: budgetState.evaluation.totalRequiredShare,
+              lines: budgetState.evaluation.lines.map((line) => ({
+                key: line.key,
+                requiredBudgetShare: line.requirement.budgetShare,
+                requiredGdpShare: line.requirement.gdpShare,
+              })),
             }
           : null
       }

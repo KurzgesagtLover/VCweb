@@ -1,26 +1,20 @@
 import Decimal from "decimal.js";
-import { and, desc, eq, inArray, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "@/src/db";
 import {
   auditLogs,
   campaigns,
   countries,
   countryDevelopmentTracks,
-  countryFiscalPolicies,
   countryLawChanges,
   countryLaws,
   countryPoliticalResources,
-  countryRelations,
-  demographicSnapshots,
-  economicSnapshots,
   modifiers,
   politicalPowerLedger,
-  politicalSnapshots,
   turns,
   type DomainEffect,
 } from "@/src/db/schema";
 import { advanceDevelopmentTrack } from "@/src/domain/development/tracks";
-import { evaluateAdministrationBudget, gdpPerCapita } from "@/src/domain/economy/administration";
 import {
   addDrifts,
   applyMonthlyDrifts,
@@ -42,16 +36,29 @@ import {
   netIncomePerGameDay,
   remainingCooldownMonths,
   requireLawDefinition,
-  resolveLawStages,
   settleCulturalCommitments,
   turnLengthInYears,
   adaptiveUpkeep,
   type LawDefinition,
-  type LawStages,
   type UpkeepItem,
 } from "@/src/domain/politics/laws";
 import { clampPoliticalPower, POLITICAL_POWER_MAX } from "@/src/domain/politics/political-power";
 import { monthsAfterTurnEnd } from "@/src/domain/turn/period";
+import {
+  budgetEvidence,
+  budgetFromSnapshots,
+  budgetIncomeFromEvidence,
+  evaluateCountryBudget,
+  fiscalAllocation,
+  type BudgetDemographicInput,
+  type BudgetEconomicInput,
+} from "./budget";
+import {
+  getCountryLawStages,
+  getCountryThreats,
+  isCountryAtWar,
+  latestPoliticalSnapshot,
+} from "./country-state";
 import { getPoliticalPowerState, lockAndAccruePoliticalPower } from "./political-power";
 
 type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -60,53 +67,10 @@ type Campaign = typeof campaigns.$inferSelect;
 type Turn = typeof turns.$inferSelect;
 type Country = typeof countries.$inferSelect;
 
-export async function getCountryLawStages(
-  reader: Reader,
-  country: { id: string; economicSystem: string | null },
-): Promise<LawStages> {
-  const [trackRows, lawRows] = await Promise.all([
-    reader
-      .select({ key: countryDevelopmentTracks.metric, stage: countryDevelopmentTracks.stage })
-      .from(countryDevelopmentTracks)
-      .where(eq(countryDevelopmentTracks.countryId, country.id)),
-    reader
-      .select({ key: countryLaws.lawKey, stage: countryLaws.stage })
-      .from(countryLaws)
-      .where(eq(countryLaws.countryId, country.id)),
-  ]);
-  return resolveLawStages([...trackRows, ...lawRows], country.economicSystem);
-}
+export { getCountryLawStages, isCountryAtWar };
 
-export async function isCountryAtWar(reader: Reader, campaignId: string, countryId: string) {
-  const rows = await reader
-    .select({ id: countryRelations.id })
-    .from(countryRelations)
-    .where(
-      and(
-        eq(countryRelations.campaignId, campaignId),
-        or(
-          eq(countryRelations.fromCountryId, countryId),
-          eq(countryRelations.toCountryId, countryId),
-        ),
-        inArray(countryRelations.status, ["WAR", "CIVIL_WAR"]),
-      ),
-    )
-    .limit(1);
-  return rows.length > 0;
-}
+const latestPolitical = latestPoliticalSnapshot;
 
-async function latestPolitical(reader: Reader, countryId: string) {
-  const [row] = await reader
-    .select({ snapshot: politicalSnapshots })
-    .from(politicalSnapshots)
-    .innerJoin(turns, eq(politicalSnapshots.turnId, turns.id))
-    .where(eq(politicalSnapshots.countryId, countryId))
-    .orderBy(desc(turns.sequence))
-    .limit(1);
-  return row?.snapshot ?? null;
-}
-
-/** 법별로 마지막으로 시행된 턴 순번 */
 /** 법별로 마지막 변경이 시행된 턴의 끝 날짜(YYYY-MM-DD). */
 async function lastAppliedTurnEnds(reader: Reader, countryId: string) {
   const rows = await reader
@@ -223,85 +187,16 @@ async function activeIncomeModifierTotal(reader: Reader, countryId: string, turn
   }, new Decimal(0));
 }
 
-/** 최근 공개 스냅샷과 현재 예산으로 행정·치안 예산 상태를 계산한다. */
-export async function evaluateCountryAdministration(reader: Reader, countryId: string) {
-  const [economic, demographic, political, fiscal] = await Promise.all([
-    reader
-      .select({ snapshot: economicSnapshots })
-      .from(economicSnapshots)
-      .innerJoin(turns, eq(economicSnapshots.turnId, turns.id))
-      .where(eq(economicSnapshots.countryId, countryId))
-      .orderBy(desc(turns.sequence))
-      .limit(1),
-    reader
-      .select({ snapshot: demographicSnapshots })
-      .from(demographicSnapshots)
-      .innerJoin(turns, eq(demographicSnapshots.turnId, turns.id))
-      .where(eq(demographicSnapshots.countryId, countryId))
-      .orderBy(desc(turns.sequence))
-      .limit(1),
-    latestPolitical(reader, countryId),
-    reader
-      .select()
-      .from(countryFiscalPolicies)
-      .where(eq(countryFiscalPolicies.countryId, countryId))
-      .limit(1),
-  ]);
-  return administrationFromSnapshots({
-    economic: economic[0]?.snapshot ?? null,
-    demographic: demographic[0]?.snapshot ?? null,
-    unrest: political?.unrest ?? 0,
-    budgetAdministration: fiscal[0]?.budgetAdministration ?? null,
-  });
-}
-
-export function administrationFromSnapshots(input: {
-  economic: {
-    realGdp: string;
-    nominalGdp: string;
-    governmentSpending: string;
-    scale: string;
-  } | null;
-  demographic: { population: string; populationDensity: string | null } | null;
-  unrest: number;
-  budgetAdministration: number | null;
-}) {
-  if (!input.economic || !input.demographic) return null;
-  const nominalGdp = new Decimal(input.economic.nominalGdp);
-  const spendingToGdp = nominalGdp.gt(0)
-    ? new Decimal(input.economic.governmentSpending).div(nominalGdp)
-    : new Decimal(0);
-  const evaluation = evaluateAdministrationBudget({
-    population: input.demographic.population,
-    populationDensity: input.demographic.populationDensity,
-    gdpPerCapita: gdpPerCapita({
-      realGdp: input.economic.realGdp,
-      population: input.demographic.population,
-      scale: input.economic.scale,
-    }),
-    unrest: input.unrest,
-    spendingToGdp,
-    budgetAdministrationPercent: input.budgetAdministration ?? 15,
-  });
-  return {
-    ...evaluation,
-    spendingToGdp: spendingToGdp.toString(),
-    budgetAdministration: input.budgetAdministration ?? 15,
-  };
-}
-
-export type AdministrationEvaluation = NonNullable<ReturnType<typeof administrationFromSnapshots>>;
-
 /** 경제 계산 단계에서 쓸 법·제도와 예산 상태 */
 export async function loadCalculationSystems(input: {
-  country: { id: string; economicSystem: string | null };
+  country: { id: string; campaignId: string; economicSystem: string | null };
   turn: { gameDateStart: string; gameDateEnd: string };
-  economic: Parameters<typeof administrationFromSnapshots>[0]["economic"];
-  demographic: Parameters<typeof administrationFromSnapshots>[0]["demographic"];
+  economic: BudgetEconomicInput | null;
+  demographic: BudgetDemographicInput | null;
   unrest: number;
-  budgetAdministration: number | null;
+  fiscal: Parameters<typeof fiscalAllocation>[0];
 }) {
-  const [stages, commitments] = await Promise.all([
+  const [stages, commitments, threats] = await Promise.all([
     getCountryLawStages(db, input.country),
     db
       .select()
@@ -313,28 +208,40 @@ export async function loadCalculationSystems(input: {
           eq(countryLawChanges.upkeepMode, "ADAPTIVE"),
         ),
       ),
+    getCountryThreats(db, input.country.campaignId, input.country.id),
   ]);
   const lawEffects = lawStructuralEffects(stages);
   const culturalDrift = addDrifts(
     ...commitments.map((commitment) => culturalCommitmentDrift(commitment)),
   );
-  const administration = administrationFromSnapshots(input);
-  const tier = administration?.tier ?? null;
-  const drift = addDrifts(lawEffects.drift, tier?.drift ?? {}, culturalDrift);
+  const budget = budgetFromSnapshots({
+    economic: input.economic,
+    demographic: input.demographic,
+    unrest: input.unrest,
+    allocation: fiscalAllocation(input.fiscal),
+    lawStages: stages,
+    threats,
+  });
+  const budgetStructural = budget?.evaluation.structural;
+  const drift = addDrifts(lawEffects.drift, budget?.evaluation.drift ?? {}, culturalDrift);
+  const sum = (...values: Array<Decimal.Value | undefined>) =>
+    values.reduce<Decimal>((total, value) => total.plus(value ?? 0), new Decimal(0)).toString();
   return {
     stages,
     lawEffects,
     culturalDrift,
-    administration,
+    threats,
+    budget,
     drift,
     months: monthsInTurn(input.turn.gameDateStart, input.turn.gameDateEnd),
     structural: {
-      potentialGrowth: new Decimal(lawEffects.potentialGrowth)
-        .plus(tier?.potentialGrowth ?? 0)
-        .toString(),
-      naturalUnemployment: lawEffects.naturalUnemployment,
-      inflationPressure: lawEffects.inflationPressure,
-      revenueEfficiency: tier?.revenueEfficiency ?? "0",
+      potentialGrowth: sum(lawEffects.potentialGrowth, budgetStructural?.potentialGrowth),
+      naturalUnemployment: sum(
+        lawEffects.naturalUnemployment,
+        budgetStructural?.naturalUnemployment,
+      ),
+      inflationPressure: sum(lawEffects.inflationPressure, budgetStructural?.inflationPressure),
+      revenueEfficiency: sum(budgetStructural?.revenueEfficiency),
     },
   };
 }
@@ -343,6 +250,8 @@ export function calculationSystemsEvidence(
   systems: Awaited<ReturnType<typeof loadCalculationSystems>>,
   driftChanges: DriftChange[],
 ) {
+  const budget = budgetEvidence(systems.budget?.evaluation ?? null);
+  const administration = budget?.lines.find((line) => line.key === "budgetAdministration");
   return {
     lawStages: systems.stages,
     lawSources: systems.lawEffects.sources,
@@ -351,31 +260,20 @@ export function calculationSystemsEvidence(
     culturalDrift: systems.culturalDrift,
     months: systems.months,
     driftChanges,
-    administration: systems.administration
+    threats: { atWar: systems.threats.atWar, threats: systems.threats.threats },
+    budget,
+    // 이전 화면·정산 코드와의 호환을 위해 행정 부문을 따로 남긴다.
+    administration: administration
       ? {
-          coverage: systems.administration.coverage,
-          requiredGdpShare: systems.administration.requirement.gdpShare,
-          requiredBudgetShare: systems.administration.requirement.budgetShare,
-          allocatedGdpShare: systems.administration.allocatedGdpShare,
-          budgetAdministration: systems.administration.budgetAdministration,
-          tier: systems.administration.tier.key,
-          tierLabel: systems.administration.tier.label,
-          politicalPowerIncome: systems.administration.tier.politicalPowerIncome,
+          coverage: administration.coverage,
+          requiredGdpShare: administration.requiredGdpShare,
+          requiredBudgetShare: administration.requiredBudgetShare,
+          allocatedGdpShare: administration.allocatedGdpShare,
+          tier: administration.tier,
+          tierLabel: administration.tierLabel,
+          politicalPowerIncome: administration.politicalPowerIncome,
         }
       : null,
-  };
-}
-
-function administrationIncomeFromEvidence(evidence: unknown) {
-  const systems = (evidence as { politicalSystems?: { administration?: unknown } } | null)
-    ?.politicalSystems;
-  const administration = systems?.administration as
-    | { politicalPowerIncome?: number; tierLabel?: string }
-    | null
-    | undefined;
-  return {
-    income: Number(administration?.politicalPowerIncome ?? 0) || 0,
-    label: administration?.tierLabel ?? null,
   };
 }
 
@@ -586,17 +484,15 @@ export async function settleCountryPoliticalPower(
   const fixedItems = fixedLawUpkeepItems(stages);
   const upkeepItems = [...fixedItems, ...adaptiveItems];
   const upkeep = upkeepItems.reduce((sum, item) => sum.plus(item.upkeep), new Decimal(0));
-  const [incomeModifierTotal, administration] = await Promise.all([
-    activeIncomeModifierTotal(tx, countryId, turn.sequence),
-    Promise.resolve(administrationIncomeFromEvidence(input.evidence)),
-  ]);
+  const incomeModifierTotal = await activeIncomeModifierTotal(tx, countryId, turn.sequence);
+  const budgetIncome = budgetIncomeFromEvidence(input.evidence);
   const income = calculatePoliticalPowerIncome({
     legitimacy: Number(political.legitimacy ?? 50),
     stability: Number(political.stability ?? 50),
     governmentApproval: Number(political.governmentApproval ?? 50),
     stateCapacity: Number(political.stateCapacity ?? 50),
     corruption: Number(political.corruption ?? 0),
-    modifiers: incomeModifierTotal.plus(administration.income),
+    modifiers: incomeModifierTotal.plus(budgetIncome.income),
   });
   const net = income.total.minus(upkeep);
   const finalBalance = balance.toDecimalPlaces(4);
@@ -624,7 +520,7 @@ export async function settleCountryPoliticalPower(
       breakdown: {
         income: income.components,
         incomeModifiers: incomeModifierTotal.toString(),
-        administration,
+        budget: budgetIncome,
         upkeep: upkeepItems,
         oneTimePower: oneTimePower.toString(),
         appliedOrders,
@@ -921,30 +817,29 @@ export async function getLawBoard(input: {
   turn: Turn | null;
 }) {
   const power = await getPoliticalPowerState(input.country.id, input.campaign);
-  const [stages, changes, lastTurnEnds, political, atWar, ledgerRows, administration] =
-    await Promise.all([
-      getCountryLawStages(db, input.country),
-      db
-        .select()
-        .from(countryLawChanges)
-        .where(
-          and(
-            eq(countryLawChanges.countryId, input.country.id),
-            inArray(countryLawChanges.status, ["PENDING", "ACTIVE"]),
-          ),
+  const [stages, changes, lastTurnEnds, political, atWar, ledgerRows, budget] = await Promise.all([
+    getCountryLawStages(db, input.country),
+    db
+      .select()
+      .from(countryLawChanges)
+      .where(
+        and(
+          eq(countryLawChanges.countryId, input.country.id),
+          inArray(countryLawChanges.status, ["PENDING", "ACTIVE"]),
         ),
-      lastAppliedTurnEnds(db, input.country.id),
-      latestPolitical(db, input.country.id),
-      isCountryAtWar(db, input.campaign.id, input.country.id),
-      db
-        .select({ ledger: politicalPowerLedger, sequence: turns.sequence })
-        .from(politicalPowerLedger)
-        .innerJoin(turns, eq(politicalPowerLedger.turnId, turns.id))
-        .where(eq(politicalPowerLedger.countryId, input.country.id))
-        .orderBy(desc(turns.sequence))
-        .limit(6),
-      evaluateCountryAdministration(db, input.country.id),
-    ]);
+      ),
+    lastAppliedTurnEnds(db, input.country.id),
+    latestPolitical(db, input.country.id),
+    isCountryAtWar(db, input.campaign.id, input.country.id),
+    db
+      .select({ ledger: politicalPowerLedger, sequence: turns.sequence })
+      .from(politicalPowerLedger)
+      .innerJoin(turns, eq(politicalPowerLedger.turnId, turns.id))
+      .where(eq(politicalPowerLedger.countryId, input.country.id))
+      .orderBy(desc(turns.sequence))
+      .limit(6),
+    evaluateCountryBudget(db, input.country),
+  ]);
   const democracy = political?.democracy ?? 50;
   const entries: LawBoardEntry[] = LAW_DEFINITIONS.map((definition) => {
     const stage = stages[definition.key];
@@ -1026,7 +921,14 @@ export async function getLawBoard(input: {
   const incomeModifierTotal = input.turn
     ? await activeIncomeModifierTotal(db, input.country.id, input.turn.sequence)
     : new Decimal(0);
-  const administrationIncome = administration?.tier.politicalPowerIncome ?? 0;
+  const budgetIncome = budget?.evaluation.politicalPowerIncome ?? 0;
+  const budgetIncomeItems = (budget?.evaluation.lines ?? [])
+    .filter((line) => line.tier.politicalPowerIncome)
+    .map((line) => ({
+      key: line.key,
+      label: `${line.label} (${line.tier.label})`,
+      income: line.tier.politicalPowerIncome,
+    }));
   const income = political
     ? calculatePoliticalPowerIncome({
         legitimacy: political.legitimacy,
@@ -1034,7 +936,7 @@ export async function getLawBoard(input: {
         governmentApproval: political.governmentApproval,
         stateCapacity: political.stateCapacity,
         corruption: political.corruption,
-        modifiers: incomeModifierTotal.plus(administrationIncome),
+        modifiers: incomeModifierTotal.plus(budgetIncome),
       })
     : null;
 
@@ -1045,8 +947,8 @@ export async function getLawBoard(input: {
       ? {
           income: income.total.toString(),
           incomeComponents: income.components,
-          administrationLabel: administration?.tier.label ?? null,
-          administrationIncome,
+          budgetIncome,
+          budgetIncomeItems,
           upkeep: upkeep.toString(),
           upkeepItems,
           net: income.total.minus(upkeep).toString(),

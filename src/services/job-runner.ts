@@ -439,7 +439,7 @@ async function handleCalculation(job: JobRow) {
     economic: snapshots.economic,
     demographic: snapshots.demographic,
     unrest: Number(snapshots.political.unrest ?? 0),
-    budgetAdministration: snapshots.fiscalPolicy?.budgetAdministration ?? null,
+    fiscal: snapshots.fiscalPolicy ?? null,
   });
   const period = turnPeriod(calculationTurn.gameDateStart, calculationTurn.gameDateEnd);
   const result = calculateEconomy(input, rules, systems.structural, {

@@ -168,12 +168,12 @@ export function PoliticalLawsView({ board }: { board: LawBoard }) {
                   <dd>{signed(component.value)}</dd>
                 </div>
               ))}
-              {preview.administrationLabel ? (
-                <div>
-                  <dt>행정·치안 예산 ({preview.administrationLabel})</dt>
-                  <dd>{signed(preview.administrationIncome, 0)} 반영</dd>
+              {preview.budgetIncomeItems.map((item) => (
+                <div key={item.key}>
+                  <dt>예산 · {item.label}</dt>
+                  <dd>{signed(item.income, 0)} 반영</dd>
                 </div>
-              ) : null}
+              ))}
             </dl>
           ) : (
             <p>정치 스냅샷이 공개된 뒤 계산됩니다.</p>
