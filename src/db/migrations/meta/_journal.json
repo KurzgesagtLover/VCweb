@@ -337,6 +337,13 @@
       "when": 1791910000000,
       "tag": "0047_age_structure",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1791920000000,
+      "tag": "0048_world_mechanics",
+      "breakpoints": true
     }
   ]
 }

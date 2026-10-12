@@ -11,3 +11,4 @@ export * from "./research";
 export * from "./simulation";
 export * from "./superevents";
 export * from "./world";
+export * from "./world-mechanics";

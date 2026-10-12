@@ -56,6 +56,7 @@ const playerNav: NavRailItem[] = [
   { label: "연구", href: "/country/research", icon: "research" },
   { label: "사건", href: "/events", icon: "event" },
   { label: "연재", href: "/submissions", icon: "submission" },
+  { label: "세계 정세", href: "/world-state", icon: "world" },
   { label: "세계관", href: "/world", icon: "world" },
   { label: "채팅", href: "/chat", icon: "chat" },
   { label: "국가 변경", href: "/apply", icon: "switchCountry" },
@@ -64,6 +65,7 @@ const playerNav: NavRailItem[] = [
 const adminNav: NavRailItem[] = [
   { label: "관리 현황", href: "/admin", icon: "briefing" },
   { label: "세계관 편집", href: "/admin/world", icon: "world" },
+  { label: "세계 메커니즘", href: "/admin/world-mechanics", icon: "world" },
   { label: "국가 관리", href: "/admin/countries", icon: "country" },
   { label: "사용자·배정", href: "/admin/users", icon: "society" },
   { label: "경제 원장", href: "/admin/economy", icon: "economy" },

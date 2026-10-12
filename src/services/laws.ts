@@ -60,6 +60,7 @@ import {
   latestPoliticalSnapshot,
 } from "./country-state";
 import { getPoliticalPowerState, lockAndAccruePoliticalPower } from "./political-power";
+import { loadWorldEffects } from "./world-mechanics";
 
 type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Reader = Pick<typeof db, "select">;
@@ -196,7 +197,7 @@ export async function loadCalculationSystems(input: {
   unrest: number;
   fiscal: Parameters<typeof fiscalAllocation>[0];
 }) {
-  const [stages, commitments, threats] = await Promise.all([
+  const [stages, commitments, threats, world] = await Promise.all([
     getCountryLawStages(db, input.country),
     db
       .select()
@@ -209,6 +210,7 @@ export async function loadCalculationSystems(input: {
         ),
       ),
     getCountryThreats(db, input.country.campaignId, input.country.id),
+    loadWorldEffects(db, input.country.campaignId),
   ]);
   const lawEffects = lawStructuralEffects(stages);
   const culturalDrift = addDrifts(
@@ -223,7 +225,13 @@ export async function loadCalculationSystems(input: {
     threats,
   });
   const budgetStructural = budget?.evaluation.structural;
-  const drift = addDrifts(lawEffects.drift, budget?.evaluation.drift ?? {}, culturalDrift);
+  const worldStructural = world.effects.structural;
+  const drift = addDrifts(
+    lawEffects.drift,
+    budget?.evaluation.drift ?? {},
+    culturalDrift,
+    world.effects.drift,
+  );
   const sum = (...values: Array<Decimal.Value | undefined>) =>
     values.reduce<Decimal>((total, value) => total.plus(value ?? 0), new Decimal(0)).toString();
   return {
@@ -232,16 +240,29 @@ export async function loadCalculationSystems(input: {
     culturalDrift,
     threats,
     budget,
+    world,
     drift,
     months: monthsInTurn(input.turn.gameDateStart, input.turn.gameDateEnd),
     structural: {
-      potentialGrowth: sum(lawEffects.potentialGrowth, budgetStructural?.potentialGrowth),
+      potentialGrowth: sum(
+        lawEffects.potentialGrowth,
+        budgetStructural?.potentialGrowth,
+        worldStructural.potentialGrowth,
+      ),
       naturalUnemployment: sum(
         lawEffects.naturalUnemployment,
         budgetStructural?.naturalUnemployment,
+        worldStructural.naturalUnemployment,
       ),
-      inflationPressure: sum(lawEffects.inflationPressure, budgetStructural?.inflationPressure),
-      revenueEfficiency: sum(budgetStructural?.revenueEfficiency),
+      inflationPressure: sum(
+        lawEffects.inflationPressure,
+        budgetStructural?.inflationPressure,
+        worldStructural.inflationPressure,
+      ),
+      revenueEfficiency: sum(
+        budgetStructural?.revenueEfficiency,
+        worldStructural.revenueEfficiency,
+      ),
     },
   };
 }
@@ -262,6 +283,12 @@ export function calculationSystemsEvidence(
     driftChanges,
     threats: { atWar: systems.threats.atWar, threats: systems.threats.threats },
     budget,
+    world: {
+      spirits: systems.world.effects.spirits,
+      drift: systems.world.effects.drift,
+      structural: systems.world.effects.structural,
+      states: systems.world.states,
+    },
     // 이전 화면·정산 코드와의 호환을 위해 행정 부문을 따로 남긴다.
     administration: administration
       ? {

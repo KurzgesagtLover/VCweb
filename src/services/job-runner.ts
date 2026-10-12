@@ -55,6 +55,8 @@ import {
   type EconomicSystem,
 } from "@/src/domain/policy/model";
 import { calculationSystemsEvidence, loadCalculationSystems } from "@/src/services/laws";
+import { pendingWorldSpending } from "@/src/services/world-mechanics";
+import { economicScaleMultiplier } from "@/src/domain/economy/administration";
 
 type JobRow = {
   id: string;
@@ -477,6 +479,18 @@ async function handleCalculation(job: JobRow) {
     creditRating: creditRatingFromScore(economicResult.creditScore),
     calculationState: "MACRO_SIMULATED",
   };
+  // 세계 대응 행동 같은 특별 지출($1M)은 이번 턴 국가부채로 들어간다.
+  const extraordinarySpending = await pendingWorldSpending(db, countryId, job.turnId);
+  if (extraordinarySpending.gt(0)) {
+    const amount = extraordinarySpending
+      .mul(1_000_000)
+      .div(economicScaleMultiplier(snapshots.economic.scale));
+    const debt = new Decimal(String(afterEconomic.nationalDebt)).plus(amount);
+    afterEconomic.nationalDebt = debt.toFixed(4);
+    const nominal = new Decimal(String(afterEconomic.nominalGdp));
+    if (nominal.gt(0))
+      afterEconomic.debtToGdp = debt.div(nominal).toSignificantDigits(12).toString();
+  }
   const afterDemographic = {
     ...beforeDemographic,
     population,
@@ -628,6 +642,7 @@ async function handleCalculation(job: JobRow) {
         macroInput: input,
         period: { ...period, economyPeriodYears: periodYears },
         demography: demographyEvidence,
+        extraordinarySpending: extraordinarySpending.toString(),
         politicalSystems: systemsEvidence,
       },
     })
@@ -649,6 +664,7 @@ async function handleCalculation(job: JobRow) {
           macroInput: input,
           period: { ...period, economyPeriodYears: periodYears },
           demography: demographyEvidence,
+          extraordinarySpending: extraordinarySpending.toString(),
           politicalSystems: systemsEvidence,
         },
         updatedAt: new Date(),

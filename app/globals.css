@@ -11127,3 +11127,94 @@ body:has(.globe-stage) .sidebar {
 .age-pyramid .tno-bar i {
   background: #4bb6f2;
 }
+
+/* 세계 메커니즘 */
+.world-mechanic-description,
+.world-mechanic-stage {
+  margin: 0 0 0.4rem;
+  color: #c3ced2;
+  font-size: 0.72rem;
+}
+.world-mechanic-meter {
+  position: relative;
+  height: 0.7rem;
+  margin: 0.3rem 0;
+  border: 1px solid var(--tno-line-soft);
+  background: #05080a;
+}
+.world-mechanic-meter i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #f2c14b, #ef6a80);
+}
+.world-mechanic-meter b {
+  position: absolute;
+  top: -0.15rem;
+  bottom: -0.15rem;
+  width: 1px;
+  background: #e6edef;
+  opacity: 0.6;
+}
+.world-mechanic-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.7rem;
+  margin-bottom: 0.3rem;
+}
+.world-mechanic-status strong {
+  font-family: var(--mono);
+}
+.world-mechanic-status span {
+  color: #f2c14b;
+  font-size: 0.75rem;
+}
+.world-mechanic-status small,
+.world-mechanic-note {
+  color: #a4b0b6;
+  font-size: 0.66rem;
+}
+.world-mechanic-actions {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.world-mechanic-actions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.8rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--tno-line-soft);
+}
+.world-mechanic-actions li > div {
+  display: grid;
+  gap: 0.1rem;
+  min-width: min(100%, 18rem);
+  flex: 1;
+}
+.world-mechanic-actions span,
+.world-mechanic-actions small {
+  color: #a4b0b6;
+  font-size: 0.66rem;
+}
+.world-mechanic-actions form {
+  display: grid;
+  gap: 0.15rem;
+  justify-items: end;
+}
+.admin-inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.admin-inline-form label {
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.7rem;
+}

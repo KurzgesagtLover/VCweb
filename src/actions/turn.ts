@@ -49,6 +49,7 @@ import {
 import { roundPoliticalMetric } from "@/src/domain/politics/drift";
 import { applyCountryDevelopmentDeltas } from "@/src/services/development-tracks";
 import { settleCountryPoliticalPower } from "@/src/services/laws";
+import { settleWorldMechanics } from "@/src/services/world-mechanics";
 
 function requireConfirmation(formData: FormData) {
   if (formData.get("confirm") !== "yes")
@@ -591,6 +592,7 @@ export async function publishTurnCore(
       .set({ publishedAt: new Date(), updatedAt: new Date() })
       .where(eq(turnCountryWorkspaces.turnId, turn.id));
     await applyCountryDevelopmentDeltas(tx, developmentDeltas);
+    await settleWorldMechanics(tx, { campaign, turn, now: publishedAt });
     for (const workspace of workspaceRows) {
       const economic = { ...workspace.afterEconomic } as Record<string, unknown>;
       const demographic = { ...workspace.afterDemographic } as Record<string, unknown>;
