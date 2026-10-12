@@ -47,6 +47,7 @@ import { validateEffects } from "@/src/domain/effects/registry";
 import { isPolicyMetric, metricValue } from "@/src/domain/policy/metrics";
 import { applyMonthlyDrifts, roundPoliticalMetric } from "@/src/domain/politics/drift";
 import { turnPeriod, yearsBetweenTurnEnds } from "@/src/domain/turn/period";
+import { advanceDemography, roundAgeStructure } from "@/src/domain/demography/age-structure";
 import {
   calculatePolicyEffectiveness,
   calculatePoliticalState,
@@ -337,6 +338,28 @@ async function handleCalculation(job: JobRow) {
   const beforeDemographic = { ...snapshots.demographic } as Record<string, unknown>;
   const beforePolitical = { ...snapshots.political } as Record<string, unknown>;
   const overrides = new Map(snapshots.snapshotInputs.map((input) => [input.metric, input.value]));
+  const [jobCountry, calculationTurn] = await Promise.all([
+    db.query.countries.findFirst({ where: eq(countries.id, countryId) }),
+    db.query.turns.findFirst({ where: eq(turns.id, job.turnId) }),
+  ]);
+  if (!jobCountry || !calculationTurn)
+    throw new Error("계산 대상 국가 또는 턴을 찾을 수 없습니다.");
+  const period = turnPeriod(calculationTurn.gameDateStart, calculationTurn.gameDateEnd);
+  const demography = advanceDemography({
+    population: Number(snapshots.demographic.population),
+    medianAge: Number(snapshots.demographic.medianAge),
+    lifeExpectancy: Number(snapshots.demographic.lifeExpectancy),
+    fertilityRate: Number(snapshots.demographic.fertilityRate),
+    populationGrowthRate: Number(snapshots.demographic.populationGrowthRate),
+    ageStructure: snapshots.demographic.ageStructure,
+    netMigrationRate:
+      snapshots.demographic.netMigrationRate === null
+        ? null
+        : Number(snapshots.demographic.netMigrationRate),
+    years: period.years,
+    migrationShock: Number(overrides.get("migrationShock") ?? 0),
+  });
+  const projectedGrowthRate = demography.annualGrowthRate.toFixed(6);
   const sectorGrowth = weightedAverage(
     snapshots.sectors.map((sector) => ({ value: sector.growthRate, weight: sector.share })),
     snapshots.economic.realGdpGrowth,
@@ -374,7 +397,7 @@ async function handleCalculation(job: JobRow) {
   const input: EconomyInput = {
     population: snapshots.demographic.population,
     fertilityRate: snapshots.demographic.fertilityRate,
-    populationGrowthRate: snapshots.demographic.populationGrowthRate,
+    populationGrowthRate: projectedGrowthRate,
     medianAge: snapshots.demographic.medianAge,
     lifeExpectancy: snapshots.demographic.lifeExpectancy,
     migrationShock: overrides.get("migrationShock") ?? "0",
@@ -427,12 +450,6 @@ async function handleCalculation(job: JobRow) {
         growthMax: snapshots.ruleRow.ranges.growth?.max ?? DEFAULT_ECONOMY_RULES.growthMax,
       }
     : DEFAULT_ECONOMY_RULES;
-  const [jobCountry, calculationTurn] = await Promise.all([
-    db.query.countries.findFirst({ where: eq(countries.id, countryId) }),
-    db.query.turns.findFirst({ where: eq(turns.id, job.turnId) }),
-  ]);
-  if (!jobCountry || !calculationTurn)
-    throw new Error("계산 대상 국가 또는 턴을 찾을 수 없습니다.");
   const systems = await loadCalculationSystems({
     country: jobCountry,
     turn: calculationTurn,
@@ -441,12 +458,18 @@ async function handleCalculation(job: JobRow) {
     unrest: Number(snapshots.political.unrest ?? 0),
     fiscal: snapshots.fiscalPolicy ?? null,
   });
-  const period = turnPeriod(calculationTurn.gameDateStart, calculationTurn.gameDateEnd);
   const result = calculateEconomy(input, rules, systems.structural, {
     periodYears: period.years,
     spendingGrowthPeriodYears: snapshots.spendingReference?.gapYears ?? 1,
   });
-  const { population, populationGrowthRate, periodYears, ...economicResult } = result;
+  const { periodYears, ...economicOutput } = result;
+  // 인구는 연령 구조 모델이 정한다. 경제 계산의 인구 값은 쓰지 않는다.
+  const economicResult = Object.fromEntries(
+    Object.entries(economicOutput).filter(
+      ([key]) => key !== "population" && key !== "populationGrowthRate",
+    ),
+  ) as Omit<typeof economicOutput, "population" | "populationGrowthRate">;
+  const population = Math.round(demography.population).toString();
   const afterEconomic = {
     ...beforeEconomic,
     ...economicResult,
@@ -457,7 +480,10 @@ async function handleCalculation(job: JobRow) {
   const afterDemographic = {
     ...beforeDemographic,
     population,
-    populationGrowthRate,
+    populationGrowthRate: projectedGrowthRate,
+    medianAge: demography.medianAge.toFixed(2),
+    ageStructure: roundAgeStructure(demography.structure),
+    netMigrationRate: demography.netMigrationRate.toFixed(7),
     populationDensity: new Decimal(snapshots.demographic.population).isZero()
       ? snapshots.demographic.populationDensity
       : new Decimal(snapshots.demographic.populationDensity)
@@ -568,6 +594,19 @@ async function handleCalculation(job: JobRow) {
 
   const driftChanges = applyMonthlyDrifts(afterPolitical, systems.drift, systems.months);
   const systemsEvidence = calculationSystemsEvidence(systems, driftChanges);
+  const demographyEvidence = {
+    source: demography.source,
+    births: Math.round(demography.births),
+    deaths: Math.round(demography.deaths),
+    migrants: Math.round(demography.migrants),
+    netMigrationRate: demography.netMigrationRate,
+    annualGrowthRate: projectedGrowthRate,
+    medianAge: demography.medianAge.toFixed(2),
+    childShare: demography.groups.childShare.toFixed(4),
+    workingShare: demography.groups.workingShare.toFixed(4),
+    elderlyShare: demography.groups.elderlyShare.toFixed(4),
+    dependencyRatio: demography.groups.dependencyRatio.toFixed(4),
+  };
 
   await db
     .insert(turnCountryWorkspaces)
@@ -588,6 +627,7 @@ async function handleCalculation(job: JobRow) {
         deterministic: true,
         macroInput: input,
         period: { ...period, economyPeriodYears: periodYears },
+        demography: demographyEvidence,
         politicalSystems: systemsEvidence,
       },
     })
@@ -608,6 +648,7 @@ async function handleCalculation(job: JobRow) {
           deterministic: true,
           macroInput: input,
           period: { ...period, economyPeriodYears: periodYears },
+          demography: demographyEvidence,
           politicalSystems: systemsEvidence,
         },
         updatedAt: new Date(),

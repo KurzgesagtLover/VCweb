@@ -1,7 +1,16 @@
 import { requireSession } from "@/src/auth/session";
+import { db } from "@/src/db";
 import { getCountryLedger } from "@/src/db/queries/country";
 import { getViewerContext } from "@/src/db/queries/viewer";
+import {
+  ageGroups,
+  fiveYearBands,
+  manpowerPool,
+  normalizeAgeStructure,
+} from "@/src/domain/demography/age-structure";
 import { metricLabel } from "@/src/domain/display-labels";
+import { requireLawDefinition } from "@/src/domain/politics/laws";
+import { getCountryLawStages } from "@/src/services/country-state";
 import { DevelopmentTrackGrid } from "@/src/ui/development-tracks";
 import { formatDecimal, formatPercent } from "@/src/ui/format";
 import {
@@ -61,6 +70,17 @@ export default async function SocietyPage() {
     : [];
 
   const estimated = (demo?.estimatedFields ?? []).map((field) => metricLabel(field));
+
+  const ageStructure = normalizeAgeStructure(demo?.ageStructure);
+  const groups = ageStructure ? ageGroups(ageStructure) : null;
+  const bands = ageStructure ? fiveYearBands(ageStructure).reverse() : [];
+  const largestBand = Math.max(1, ...bands.map((band) => band.value));
+  const lawStages = await getCountryLawStages(db, ledger.country);
+  const conscription = requireLawDefinition("conscriptionLaw");
+  const conscriptionStage = conscription.stages[(lawStages.conscriptionLaw ?? 1) - 1];
+  const manpowerShare = Number(conscriptionStage?.manpowerShare ?? 0);
+  const manpower = ageStructure ? manpowerPool(ageStructure, manpowerShare) : null;
+  const percentOf = (value: number) => `${(value * 100).toFixed(1)}%`;
 
   return (
     <TnoWindow
@@ -135,7 +155,7 @@ export default async function SocietyPage() {
                 label: "인구밀도",
                 value: demo ? `${formatDecimal(demo.populationDensity, 1)} /km²` : "—",
               },
-              { label: "평균연령", value: demo ? `${formatDecimal(demo.medianAge, 1)}세` : "—" },
+              { label: "중위연령", value: demo ? `${formatDecimal(demo.medianAge, 1)}세` : "—" },
               { label: "실업률", value: formatPercent(economy?.unemploymentRate, 2) },
               { label: "소득 지니", value: economy ? formatDecimal(economy.incomeGini, 3) : "—" },
             ]}
@@ -167,6 +187,46 @@ export default async function SocietyPage() {
           </TnoPlate>
         </div>
       </div>
+
+      <TnoPlate title="연령 구조" wide>
+        {ageStructure && groups ? (
+          <div className="tno-two-column">
+            <div className="tno-gauge-list age-pyramid">
+              {bands.map((band) => (
+                <div className="tno-gauge tno-gauge-wide" key={band.label}>
+                  <span>{band.label}</span>
+                  <div className="tno-bar">
+                    <i style={{ width: `${(band.value / largestBand) * 100}%` }} />
+                  </div>
+                  <b>{formatDecimal(band.value / 1000, 0)}천</b>
+                </div>
+              ))}
+            </div>
+            <TnoStats
+              columns={2}
+              items={[
+                { label: "유소년(0–14)", value: percentOf(groups.childShare) },
+                { label: "생산가능(15–64)", value: percentOf(groups.workingShare) },
+                { label: "고령(65+)", value: percentOf(groups.elderlyShare) },
+                { label: "부양비", value: formatDecimal(groups.dependencyRatio, 2) },
+                { label: "학령인구(6–17)", value: formatDecimal(groups.schoolAge, 0) },
+                { label: "대학 연령(18–24)", value: formatDecimal(groups.universityAge, 0) },
+                { label: "병역 연령(18–49)", value: formatDecimal(groups.militaryAge, 0) },
+                {
+                  label: `동원 가능 병력 (${conscriptionStage?.label ?? "징병법"})`,
+                  value: manpower === null ? "—" : formatDecimal(manpower, 0),
+                },
+                {
+                  label: "연간 순이동률",
+                  value: formatPercent(demo?.netMigrationRate ?? null, 2),
+                },
+              ]}
+            />
+          </div>
+        ) : (
+          <p>다음 턴 계산 때 출산율·기대수명·중위연령으로 연령 구조가 만들어집니다.</p>
+        )}
+      </TnoPlate>
 
       <div className="tno-two-column">
         <TnoPlate title="군사·안보 개요">

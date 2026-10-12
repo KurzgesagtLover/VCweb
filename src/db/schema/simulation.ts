@@ -44,6 +44,10 @@ export const demographicSnapshots = pgTable(
     lifeExpectancy: numeric("life_expectancy", { precision: 6, scale: 2 }).notNull(),
     medianAge: numeric("median_age", { precision: 6, scale: 2 }).notNull(),
     populationDensity: numeric("population_density", { precision: 20, scale: 6 }).notNull(),
+    /** 0~99세 1세 단위와 100세 이상 인구(길이 101). 없으면 첫 계산 때 안정 인구 피라미드로 만든다. */
+    ageStructure: jsonb("age_structure").$type<number[]>(),
+    /** 연간 순이동률(총인구 대비). 없으면 첫 계산 때 기존 인구 성장률에서 역산한다. */
+    netMigrationRate: numeric("net_migration_rate", { precision: 10, scale: 7 }),
     estimatedFields: text("estimated_fields").array().notNull().default([]),
     ...auditColumns,
   },

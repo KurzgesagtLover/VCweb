@@ -11111,3 +11111,19 @@ body:has(.globe-stage) .sidebar {
     grid-column: 1 / -1;
   }
 }
+
+/* 연령 구조 피라미드 */
+.age-pyramid .tno-gauge {
+  gap: 0.4rem;
+  min-height: 0;
+}
+.age-pyramid .tno-gauge span,
+.age-pyramid .tno-gauge b {
+  font-size: 0.62rem;
+}
+.age-pyramid .tno-bar {
+  height: 0.45rem;
+}
+.age-pyramid .tno-bar i {
+  background: #4bb6f2;
+}

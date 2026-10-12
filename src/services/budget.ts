@@ -6,6 +6,7 @@ import {
   economicSnapshots,
   turns,
 } from "@/src/db/schema";
+import { ageGroups, normalizeAgeStructure } from "@/src/domain/demography/age-structure";
 import { gdpPerCapita } from "@/src/domain/economy/administration";
 import { BUDGET_PRESETS, BUDGET_SECTORS, type BudgetAllocation } from "@/src/domain/economy/budget";
 import {
@@ -34,6 +35,7 @@ export type BudgetDemographicInput = {
   population: string;
   populationDensity: string | null;
   medianAge: string | null;
+  ageStructure?: unknown;
 };
 
 /** 저장된 재정 정책의 예산 배분. 없으면 균형 운영 프리셋을 쓴다. */
@@ -70,6 +72,8 @@ export function budgetFromSnapshots(input: {
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
   };
+  const structure = normalizeAgeStructure(input.demographic.ageStructure);
+  const groups = structure ? ageGroups(structure) : null;
   const context: BudgetContext = {
     population: input.demographic.population,
     populationDensity: input.demographic.populationDensity,
@@ -81,6 +85,9 @@ export function budgetFromSnapshots(input: {
     spendingToGdp,
     unrest: input.unrest,
     medianAge: toNumber(input.demographic.medianAge),
+    youthShare:
+      groups && groups.total > 0 ? (groups.schoolAge + groups.universityAge) / groups.total : null,
+    elderlyShare: groups ? groups.elderlyShare : null,
     povertyRate: toNumber(input.economic.povertyRate),
     unemploymentRate: toNumber(input.economic.unemploymentRate),
     atWar: input.threats.atWar,

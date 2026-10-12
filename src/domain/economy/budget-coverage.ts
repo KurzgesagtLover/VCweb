@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { ageGroups, stableAgeStructure } from "@/src/domain/demography/age-structure";
 import { addDrifts, type MonthlyDrift } from "@/src/domain/politics/drift";
 import {
   ADMINISTRATION_TIERS,
@@ -33,6 +34,20 @@ const REFERENCE_SPENDING_TO_GDP = d("0.3");
 const REFERENCE_MEDIAN_AGE = 40;
 const MAX_COUNTED_THREATS = 5;
 
+/** 기준 국가(기대수명 80세, 중위연령 40세 안정 인구)의 연령 비율 */
+const REFERENCE_AGE_GROUPS = (() => {
+  const groups = ageGroups(
+    stableAgeStructure({ population: 1, lifeExpectancy: 80, medianAge: 40 }),
+  );
+  return {
+    youthShare: (groups.schoolAge + groups.universityAge) / groups.total,
+    elderlyShare: groups.elderlyShare,
+  };
+})();
+
+const positiveShare = (value: number | null | undefined) =>
+  value !== null && value !== undefined && Number.isFinite(value) && value > 0 ? value : null;
+
 export type BudgetContext = {
   population: Decimal.Value;
   /** 명/km² */
@@ -43,6 +58,10 @@ export type BudgetContext = {
   spendingToGdp: Decimal.Value;
   unrest: number;
   medianAge: number | null;
+  /** 6~24세 학령·대학 연령 비율. 연령 구조가 있으면 중위연령 대신 쓴다. */
+  youthShare?: number | null;
+  /** 65세 이상 비율. 연령 구조가 있으면 중위연령 대신 쓴다. */
+  elderlyShare?: number | null;
   /** 0~1 */
   povertyRate: number | null;
   /** 0~1 */
@@ -159,8 +178,11 @@ export function industryRequirement(context: BudgetContext) {
 }
 
 export function educationRequirement(context: BudgetContext) {
+  const youthShare = positiveShare(context.youthShare);
   const medianAge = finiteOr(context.medianAge, REFERENCE_MEDIAN_AGE);
-  const youth = clampDecimal(d(38).div(Math.max(15, medianAge)).pow("0.6"), "0.75", "1.35");
+  const youth = youthShare
+    ? clampDecimal(d(youthShare).div(REFERENCE_AGE_GROUPS.youthShare).pow("0.8"), "0.75", "1.35")
+    : clampDecimal(d(38).div(Math.max(15, medianAge)).pow("0.6"), "0.75", "1.35");
   const income = incomeFactor(context.gdpPerCapita, "0.04", "0.92", "1.1");
   const size = governmentSizeFactor(context.spendingToGdp);
   return requirement(
@@ -173,12 +195,15 @@ export function educationRequirement(context: BudgetContext) {
 }
 
 export function welfareRequirement(context: BudgetContext) {
+  const elderlyShare = positiveShare(context.elderlyShare);
   const medianAge = finiteOr(context.medianAge, REFERENCE_MEDIAN_AGE);
-  const ageing = clampDecimal(
-    d(Math.max(15, medianAge)).div(REFERENCE_MEDIAN_AGE).pow("0.9"),
-    "0.65",
-    "1.45",
-  );
+  const ageing = elderlyShare
+    ? clampDecimal(
+        d(elderlyShare).div(REFERENCE_AGE_GROUPS.elderlyShare).pow("0.6"),
+        "0.65",
+        "1.45",
+      )
+    : clampDecimal(d(Math.max(15, medianAge)).div(REFERENCE_MEDIAN_AGE).pow("0.9"), "0.65", "1.45");
   const poverty = clampDecimal(
     d(Math.max(0, finiteOr(context.povertyRate, 0.12) - 0.12)).mul("0.25"),
     0,
