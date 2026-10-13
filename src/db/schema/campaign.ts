@@ -33,6 +33,10 @@ export const campaigns = pgTable("campaigns", {
   gameTimePerRealDayUnit: gameTimeUnit("game_time_per_real_day_unit").notNull().default("MONTH"),
   adjudicationIntervalValue: integer("adjudication_interval_value").notNull().default(3),
   adjudicationIntervalUnit: gameTimeUnit("adjudication_interval_unit").notNull().default("MONTH"),
+  /** 실시간 계층 판정 주기(실제 초). 연구·첩보·외교·군사가 이 주기로 진행한다. */
+  realtimeTickSeconds: integer("realtime_tick_seconds").notNull().default(60),
+  /** 실시간 계층 일시정지 */
+  realtimePaused: boolean("realtime_paused").notNull().default(false),
   turnCloseHour: integer("turn_close_hour").notNull().default(23),
   turnCloseMinute: integer("turn_close_minute").notNull().default(55),
   mapCount: integer("map_count").notNull().default(1),

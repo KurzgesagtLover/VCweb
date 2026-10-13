@@ -57,6 +57,7 @@ import {
 } from "@/src/domain/policy/model";
 import { calculationSystemsEvidence, loadCalculationSystems } from "@/src/services/laws";
 import { pendingWorldSpending } from "@/src/services/world-mechanics";
+import { computeResearchCapacity } from "@/src/services/research";
 import { economicScaleMultiplier } from "@/src/domain/economy/administration";
 
 type JobRow = {
@@ -608,6 +609,25 @@ async function handleCalculation(job: JobRow) {
   }
 
   const driftChanges = applyMonthlyDrifts(afterPolitical, systems.drift, systems.months);
+  const educationTier =
+    systems.budget?.evaluation.lines.find((line) => line.key === "budgetEducation")?.tier.key ??
+    null;
+  const researchEvidence = await computeResearchCapacity({
+    country: jobCountry,
+    years: period.years,
+    economic: {
+      realGdp: String(afterEconomic.realGdp),
+      nominalGdp: String(afterEconomic.nominalGdp),
+      scale: snapshots.economic.scale,
+      turnId: snapshots.economic.turnId,
+    },
+    demographic: {
+      population: String(afterDemographic.population),
+      ageStructure: afterDemographic.ageStructure,
+    },
+    educationTier,
+    researchInvestmentRate: input.researchInvestmentRate,
+  });
   const systemsEvidence = calculationSystemsEvidence(systems, driftChanges);
   const demographyEvidence = {
     source: demography.source,
@@ -644,6 +664,7 @@ async function handleCalculation(job: JobRow) {
         period: { ...period, economyPeriodYears: periodYears },
         demography: demographyEvidence,
         extraordinarySpending: extraordinarySpending.toString(),
+        research: researchEvidence,
         politicalSystems: systemsEvidence,
       },
     })
@@ -666,6 +687,7 @@ async function handleCalculation(job: JobRow) {
           period: { ...period, economyPeriodYears: periodYears },
           demography: demographyEvidence,
           extraordinarySpending: extraordinarySpending.toString(),
+          research: researchEvidence,
           politicalSystems: systemsEvidence,
         },
         updatedAt: new Date(),

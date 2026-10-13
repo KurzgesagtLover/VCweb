@@ -171,6 +171,14 @@ const techSeed = [
   ["SPACE_ELEVATOR", "궤도 승강기", "인프라", 4, "대규모 지상-궤도 물류", "220"],
 ] as const;
 
+/** 대형 연구시설이 있어야 진행하는 기술 */
+const techRequiredFacilities: Record<string, string[]> = {
+  FUSION_GRID: ["fusion_research_facility"],
+  MOLECULAR_ASSEMBLY: ["heavy_ion_accelerator"],
+  LONGEVITY: ["biological_research_facility"],
+  PLANETARY_COMPUTE: ["synchrotron_accelerator"],
+};
+
 const techEdges = [
   ["SMART_GRID", "ENERGY_GRID"],
   ["FUSION_MATERIAL", "SMART_GRID"],
@@ -706,6 +714,7 @@ async function seed() {
           effects: [
             { metric: "productivityIndex", operation: "ADD" as const, value: String(era * 1.5) },
           ],
+          requiredFacilities: techRequiredFacilities[code] ?? [],
         })),
       )
       .returning();
@@ -727,6 +736,9 @@ async function seed() {
             progressPoints: index < 2 ? node.cost : "0",
             startedTurnId: turnRows[0].id,
             completedTurnId: index < 2 ? turnRows[2].id : null,
+            // 시드 시점에 이미 완성한 기술은 효과도 이미 반영된 것으로 본다.
+            completedAt: index < 2 ? new Date() : null,
+            effectsAppliedAt: index < 2 ? new Date() : null,
           })),
       );
     }

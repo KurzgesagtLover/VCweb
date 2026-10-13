@@ -512,6 +512,8 @@ async function seedChina2042() {
           progressPoints: completed ? node.cost : "0",
           startedTurnId: completed ? latestTurn.id : null,
           completedTurnId: completed ? latestTurn.id : null,
+          completedAt: completed ? new Date() : null,
+          effectsAppliedAt: completed ? new Date() : null,
         })
         .onConflictDoUpdate({
           target: [countryResearch.countryId, countryResearch.techNodeId],
@@ -520,6 +522,8 @@ async function seedChina2042() {
             progressPoints: completed ? node.cost : "0",
             startedTurnId: completed ? latestTurn.id : null,
             completedTurnId: completed ? latestTurn.id : null,
+            completedAt: completed ? new Date() : null,
+            effectsAppliedAt: completed ? new Date() : null,
             updatedAt: new Date(),
           },
         });

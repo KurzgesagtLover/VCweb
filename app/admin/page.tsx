@@ -142,6 +142,26 @@ export default async function AdminPage() {
               required
             />
           </label>
+          <label>
+            실시간 판정 주기(초)
+            <input
+              type="number"
+              name="realtimeTickSeconds"
+              defaultValue={context.campaign.realtimeTickSeconds}
+              min={10}
+              max={3600}
+              required
+            />
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              name="realtimePaused"
+              value="true"
+              defaultChecked={context.campaign.realtimePaused}
+            />
+            실시간 계층 일시정지
+          </label>
           <div className="campaign-schedule-summary">{cadenceLabel}</div>
           <button type="submit">설정 저장</button>
         </form>

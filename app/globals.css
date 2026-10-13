@@ -11286,3 +11286,20 @@ body:has(.globe-stage) .sidebar {
   color: var(--muted, #8d999e);
   font-size: 0.75rem;
 }
+
+/* 연구 파이프라인 */
+.research-note {
+  margin: 0.4rem 0 0;
+  color: #a4b0b6;
+  font-size: 0.68rem;
+}
+.research-blocked {
+  color: #ff9aa3;
+  font-size: 0.64rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}

@@ -15,6 +15,11 @@ import {
   type GameTimeUnit,
   nextTurnDeadline,
 } from "@/src/domain/turn/schedule";
+import {
+  REALTIME_TICK_DEFAULT_SECONDS,
+  REALTIME_TICK_MAX_SECONDS,
+  REALTIME_TICK_MIN_SECONDS,
+} from "@/src/domain/realtime/clock";
 
 const campaignSettingsSchema = z.object({
   name: z.string().trim().min(2).max(80),
@@ -24,6 +29,13 @@ const campaignSettingsSchema = z.object({
   adjudicationIntervalUnit: z.enum(GAME_TIME_UNITS),
   closeTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   mapCount: z.coerce.number().int().min(1).max(16),
+  realtimeTickSeconds: z.coerce
+    .number()
+    .int()
+    .min(REALTIME_TICK_MIN_SECONDS)
+    .max(REALTIME_TICK_MAX_SECONDS)
+    .default(REALTIME_TICK_DEFAULT_SECONDS),
+  realtimePaused: z.union([z.literal("true"), z.null()]).transform((value) => value === "true"),
 });
 
 export async function updateCampaignSettingsAction(formData: FormData) {
@@ -38,6 +50,8 @@ export async function updateCampaignSettingsAction(formData: FormData) {
     adjudicationIntervalUnit: formData.get("adjudicationIntervalUnit"),
     closeTime: formData.get("closeTime"),
     mapCount: formData.get("mapCount"),
+    realtimeTickSeconds: formData.get("realtimeTickSeconds") ?? undefined,
+    realtimePaused: formData.get("realtimePaused"),
   });
   const [turnCloseHour, turnCloseMinute] = input.closeTime.split(":").map(Number);
   const realDayInterval = adjudicationRealDayInterval(
@@ -106,6 +120,8 @@ export async function updateCampaignSettingsAction(formData: FormData) {
         turnCloseHour,
         turnCloseMinute,
         mapCount: input.mapCount,
+        realtimeTickSeconds: input.realtimeTickSeconds,
+        realtimePaused: input.realtimePaused,
         updatedAt: new Date(),
       })
       .where(eq(campaigns.id, locked.id));

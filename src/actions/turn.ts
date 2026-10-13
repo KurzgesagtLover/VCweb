@@ -51,6 +51,7 @@ import { applyCountryDevelopmentDeltas } from "@/src/services/development-tracks
 import { settleCountryPoliticalPower } from "@/src/services/laws";
 import { settleWorldMechanics } from "@/src/services/world-mechanics";
 import { applySpiritChanges, expireSpirits } from "@/src/services/spirits";
+import { persistResearchCapacity, takeCompletedTechEffects } from "@/src/services/research";
 import { parseSpiritChanges } from "@/src/domain/spirits/model";
 
 function requireConfirmation(formData: FormData) {
@@ -618,6 +619,23 @@ export async function publishTurnCore(
           applyEffectToSnapshot(economic, political, effect);
         }
       }
+      // 실시간 연구로 완성된 기술의 효과는 완성 뒤 첫 공개 때 한 번 반영한다.
+      const techEffects = await takeCompletedTechEffects(tx, {
+        countryId: workspace.countryId,
+        turnId: turn.id,
+        now: publishedAt,
+      });
+      for (const effect of techEffects) {
+        const checked = validateEffect(effect);
+        if (checked.valid && checked.effect)
+          applyEffectToSnapshot(economic, political, checked.effect);
+      }
+      await persistResearchCapacity(tx, {
+        countryId: workspace.countryId,
+        turnId: turn.id,
+        evidence: workspace.evidence,
+        now: publishedAt,
+      });
       await settleCountryPoliticalPower(tx, {
         campaign,
         turn,

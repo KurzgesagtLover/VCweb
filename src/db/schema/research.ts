@@ -33,6 +33,8 @@ export const techNodes = pgTable(
       .$type<Array<{ metric: string; operation: "ADD" | "MULTIPLY"; value: string }>>()
       .notNull()
       .default([]),
+    /** 연구에 필요한 대형 시설(건설 시설 id). 없으면 진행하지 않는다 */
+    requiredFacilities: text("required_facilities").array().notNull().default([]),
     imageKey: text("image_key"),
     isPublic: boolean("is_public").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -76,6 +78,12 @@ export const countryResearch = pgTable(
     progressPoints: numeric("progress_points", { precision: 18, scale: 4 }).notNull().default("0"),
     startedTurnId: uuid("started_turn_id").references(() => turns.id, { onDelete: "restrict" }),
     completedTurnId: uuid("completed_turn_id").references(() => turns.id, { onDelete: "restrict" }),
+    /** 실시간 연구로 완성된 시각 */
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    /** 기술 효과를 스냅샷에 반영한 시각. 완성 뒤 첫 턴 공개 때 한 번 반영한다 */
+    effectsAppliedAt: timestamp("effects_applied_at", { withTimezone: true }),
+    /** 기밀 지정: 다른 나라의 기술 전파 보너스에서 빠진다 */
+    classified: boolean("classified").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -109,5 +117,35 @@ export const researchAllocations = pgTable(
       table.techNodeId,
     ),
     check("research_allocations_points_check", sql`${table.points} >= 0`),
+  ],
+);
+
+/** 분기마다 계산하는 국가 연구 역량(교육 → 고급 인력 → 연구 인력 → 연간 연구 포인트). */
+export const countryResearchCapacity = pgTable(
+  "country_research_capacity",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    countryId: uuid("country_id")
+      .notNull()
+      .unique()
+      .references(() => countries.id, { onDelete: "restrict" }),
+    enrollmentRate: numeric("enrollment_rate", { precision: 8, scale: 6 }).notNull(),
+    graduatesPerYear: numeric("graduates_per_year", { precision: 20, scale: 2 }).notNull(),
+    tertiaryWorkers: numeric("tertiary_workers", { precision: 20, scale: 2 }).notNull(),
+    researchers: numeric("researchers", { precision: 20, scale: 2 }).notNull(),
+    rdSpendingMillions: numeric("rd_spending_millions", { precision: 24, scale: 4 }).notNull(),
+    pointsPerYear: numeric("points_per_year", { precision: 14, scale: 4 }).notNull(),
+    fieldFactors: jsonb("field_factors").$type<Record<string, number>>().notNull().default({}),
+    facilities: text("facilities").array().notNull().default([]),
+    detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+    updatedTurnId: uuid("updated_turn_id").references(() => turns.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "country_research_capacity_values_check",
+      sql`${table.pointsPerYear} >= 0 AND ${table.researchers} >= 0 AND ${table.tertiaryWorkers} >= 0`,
+    ),
   ],
 );
