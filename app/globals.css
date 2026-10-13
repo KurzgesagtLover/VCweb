@@ -396,6 +396,12 @@ p {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
 }
+.shell-clock-paused {
+  display: block;
+  color: var(--warning, #d9a441);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+}
 .shell-logout {
   padding: 0.28rem 0.48rem;
   font-size: 0.68rem;

@@ -83,6 +83,7 @@ type GlobeGameClock = {
   gameDateEnd: string;
   deadlineAt: string | null;
   intervalRealDays: number;
+  pausedAt: string | null;
 };
 
 // 국명 라벨은 디테일 텍스처에만 새겨진다. 기본 텍스처는 색상 픽킹용이라 깨끗해야 한다.
@@ -367,6 +368,7 @@ export function GlobeMap({
         deadlineAt: gameClock.deadlineAt ? new Date(gameClock.deadlineAt) : null,
         intervalRealDays: gameClock.intervalRealDays,
         now,
+        pausedAt: gameClock.pausedAt ? new Date(gameClock.pausedAt) : null,
       }) ?? new Date(`${gameClock.gameDateEnd}T12:00:00.000Z`),
     [gameClock],
   );

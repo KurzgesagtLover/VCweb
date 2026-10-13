@@ -3,15 +3,41 @@
  *
  * - 연구 역량(연간 포인트)을 배분 비율대로 기술에 나눠 쓴다. 배분하지 않은 몫은 쓰이지 않는다.
  * - 분야 배율(산업 비중·전문 시설)과 기술 전파 보너스가 곱해진다.
- * - 기술 전파: 다른 나라가 이미 완성했고 기밀로 묶지 않은 기술은 그 수에 따라 최대 50%까지 빨라진다.
+ * - 기술 전파(EU4·EU5식): 그 기술을 완성했고 기밀로 묶지 않은 나라가 가까운 관계일수록 빨라진다.
+ *   지금은 동맹 관계(같은 외교 블록, 상호방위, 독립 보장)만 가중치로 센다.
+ *   인접국은 래스터 연결성 계산, 교역량은 무역 시스템이 생기면 가중치에 더한다.
  * - 대형 시설이 필요한 기술은 시설이 없으면 진행하지 않는다.
  */
 
+import type { DiplomaticRelationStatus } from "../diplomacy/status";
+
 export const MAX_DIFFUSION_BONUS = 0.5;
 
-export function diffusionBonus(knownByOthers: number) {
-  if (!(knownByOthers > 0)) return 0;
-  return Math.min(MAX_DIFFUSION_BONUS, 0.15 * Math.sqrt(knownByOthers));
+/** 전파 상대 한 나라의 가중치. 여러 관계가 겹치면 가장 큰 값 하나만 쓴다. */
+export const DIFFUSION_WEIGHTS = {
+  SAME_BLOC: 1,
+  MUTUAL_DEFENSE: 1,
+  INDEPENDENCE_GUARANTEE: 0.5,
+} as const;
+
+export function diffusionPartnerWeight(input: {
+  sameBloc: boolean;
+  statuses: readonly DiplomaticRelationStatus[];
+}) {
+  let weight = input.sameBloc ? DIFFUSION_WEIGHTS.SAME_BLOC : 0;
+  for (const status of input.statuses) {
+    if (status === "MUTUAL_DEFENSE") weight = Math.max(weight, DIFFUSION_WEIGHTS.MUTUAL_DEFENSE);
+    if (status === "INDEPENDENCE_GUARANTEE") {
+      weight = Math.max(weight, DIFFUSION_WEIGHTS.INDEPENDENCE_GUARANTEE);
+    }
+  }
+  return weight;
+}
+
+/** 그 기술을 아는 상대들의 가중치 합으로 전파 보너스를 정한다. 동맹 4국이면 +30%, 최대 +50%. */
+export function diffusionBonus(weight: number) {
+  if (!(weight > 0)) return 0;
+  return Math.min(MAX_DIFFUSION_BONUS, 0.15 * Math.sqrt(weight));
 }
 
 export type ResearchTech = {
@@ -36,8 +62,8 @@ export type ResearchStepInput = {
   allocations: Array<{ techId: string; percent: number }>;
   techs: Map<string, ResearchTech>;
   states: Map<string, ResearchState>;
-  /** 다른 나라 가운데 이 기술을 완성했고 기밀이 아닌 나라 수 */
-  knownByOthers: Map<string, number>;
+  /** 기술별 전파 가중치 합: 이 기술을 완성했고 기밀이 아닌 상대국의 관계 가중치 */
+  diffusionWeights: Map<string, number>;
   fieldFactors: Record<string, number>;
   /** 이 나라가 가진 시설 종류 */
   facilities: ReadonlySet<string>;
@@ -126,7 +152,7 @@ export function researchStep(input: ResearchStepInput) {
     const share = budget * (percent / 100);
     const multiplier =
       (input.fieldFactors[tech.field] ?? 1) *
-      (1 + diffusionBonus(input.knownByOthers.get(tech.id) ?? 0));
+      (1 + diffusionBonus(input.diffusionWeights.get(tech.id) ?? 0));
     const gained = share * multiplier;
     const after = Math.min(tech.cost, state.progressPoints + gained);
     used += share;

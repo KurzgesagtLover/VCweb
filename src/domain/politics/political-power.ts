@@ -10,6 +10,8 @@ export const POLITICAL_POWER_MAX = 1000;
 export type PoliticalPowerClock = {
   gameTimePerRealDayValue: number;
   gameTimePerRealDayUnit: GameTimeUnit;
+  /** 캠페인 일시정지 시각. 멈춘 동안에는 정치력이 쌓이지 않는다. */
+  pausedAt?: Date | null;
 };
 
 export function clampPoliticalPower(value: Decimal.Value) {

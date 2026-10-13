@@ -35,8 +35,8 @@ export const campaigns = pgTable("campaigns", {
   adjudicationIntervalUnit: gameTimeUnit("adjudication_interval_unit").notNull().default("MONTH"),
   /** 실시간 계층 판정 주기(실제 초). 연구·첩보·외교·군사가 이 주기로 진행한다. */
   realtimeTickSeconds: integer("realtime_tick_seconds").notNull().default(60),
-  /** 실시간 계층 일시정지 */
-  realtimePaused: boolean("realtime_paused").notNull().default(false),
+  /** 캠페인 일시정지 시각. 값이 있으면 게임 시간, 턴 자동 진행, 정치력 정산, 실시간 계층이 모두 멈춘다. */
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
   turnCloseHour: integer("turn_close_hour").notNull().default(23),
   turnCloseMinute: integer("turn_close_minute").notNull().default(55),
   mapCount: integer("map_count").notNull().default(1),

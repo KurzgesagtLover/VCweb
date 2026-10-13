@@ -156,11 +156,11 @@ export default async function AdminPage() {
           <label className="checkbox-label">
             <input
               type="checkbox"
-              name="realtimePaused"
+              name="paused"
               value="true"
-              defaultChecked={context.campaign.realtimePaused}
+              defaultChecked={Boolean(context.campaign.pausedAt)}
             />
-            실시간 계층 일시정지
+            캠페인 일시정지 (게임 시간·턴 마감·정치력·실시간 계층 모두 정지)
           </label>
           <div className="campaign-schedule-summary">{cadenceLabel}</div>
           <button type="submit">설정 저장</button>

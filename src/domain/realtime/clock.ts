@@ -33,9 +33,10 @@ export type CampaignClock = {
   gameTimePerRealDayUnit: GameTimeUnit;
   adjudicationIntervalValue: number;
   adjudicationIntervalUnit: GameTimeUnit;
+  pausedAt: Date | null;
 };
 
-/** 현재 게임 시각. 진행 중인 턴의 마감과 길이로 실제 시각을 게임 달력에 대응시킨다. */
+/** 현재 게임 시각. 진행 중인 턴의 마감과 길이로 실제 시각을 게임 달력에 대응시킨다. 일시정지 중에는 멈춘 시각이다. */
 export function campaignGameInstant(
   campaign: CampaignClock,
   turn: { gameDateStart: string; gameDateEnd: string; deadlineAt: Date | null },
@@ -52,6 +53,7 @@ export function campaignGameInstant(
       campaign.adjudicationIntervalUnit,
     ),
     now,
+    pausedAt: campaign.pausedAt,
   });
 }
 

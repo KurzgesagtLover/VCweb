@@ -28,6 +28,7 @@ type Context = {
     adjudicationIntervalUnit?: GameTimeUnit;
     turnCloseHour: number;
     turnCloseMinute: number;
+    pausedAt?: Date | null;
   };
   country: {
     id: string;
@@ -265,6 +266,7 @@ export async function AppShell({
           deadlineAt={context.turn?.deadlineAt?.toISOString() ?? null}
           intervalRealDays={intervalRealDays}
           initialNow={new Date().toISOString()}
+          pausedAt={context.campaign.pausedAt?.toISOString() ?? null}
         />
       </div>
       <aside className="sidebar">

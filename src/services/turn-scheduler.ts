@@ -429,5 +429,8 @@ export async function runScheduledTurnTick(now = new Date()) {
   const activeCampaigns = await db.query.campaigns.findMany({
     where: eq(campaigns.isActive, true),
   });
-  for (const campaign of activeCampaigns) await tickCampaign(campaign, now);
+  // 일시정지한 캠페인은 마감·판정·공개를 자동으로 진행하지 않는다. 재개하면 마감이 멈춘 만큼 밀린다.
+  for (const campaign of activeCampaigns) {
+    if (!campaign.pausedAt) await tickCampaign(campaign, now);
+  }
 }

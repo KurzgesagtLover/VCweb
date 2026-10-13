@@ -1,13 +1,16 @@
 import Decimal from "decimal.js";
-import { and, desc, eq, inArray, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { db } from "@/src/db";
 import {
   campaignCities,
   cityBuildings,
   countries,
   countryDevelopmentTracks,
+  countryRelations,
   countryResearch,
   countryResearchCapacity,
+  diplomaticBlocMembers,
+  diplomaticBlocs,
   economicSectors,
   majorCompanies,
   researchAllocations,
@@ -25,7 +28,9 @@ import {
   fieldFactor,
   researchCapacity,
 } from "@/src/domain/research/capacity";
+import type { DiplomaticRelationStatus } from "@/src/domain/diplomacy/status";
 import {
+  diffusionPartnerWeight,
   researchStep,
   type ResearchState,
   type ResearchTech,
@@ -321,25 +326,87 @@ export async function effectiveAllocations(
   return { turnId: latest.turnId, rows };
 }
 
-/** 다른 나라가 완성했고 기밀이 아닌 기술 수(기술별) */
-async function knownByOthersMap(reader: Reader, campaignId: string, countryId: string) {
+/** 이 나라와 기술 전파 관계에 있는 나라별 가중치. 지금은 동맹 관계만 세고, 가중치 0은 뺀다. */
+async function diffusionPartners(reader: Reader, campaignId: string, countryId: string) {
+  const [relations, ownBloc] = await Promise.all([
+    reader
+      .select({
+        fromCountryId: countryRelations.fromCountryId,
+        toCountryId: countryRelations.toCountryId,
+        status: countryRelations.status,
+      })
+      .from(countryRelations)
+      .where(
+        and(
+          eq(countryRelations.campaignId, campaignId),
+          or(
+            eq(countryRelations.fromCountryId, countryId),
+            eq(countryRelations.toCountryId, countryId),
+          ),
+          inArray(countryRelations.status, ["MUTUAL_DEFENSE", "INDEPENDENCE_GUARANTEE"]),
+        ),
+      ),
+    reader
+      .select({ blocId: diplomaticBlocMembers.blocId })
+      .from(diplomaticBlocMembers)
+      .innerJoin(diplomaticBlocs, eq(diplomaticBlocMembers.blocId, diplomaticBlocs.id))
+      .where(
+        and(
+          eq(diplomaticBlocMembers.countryId, countryId),
+          eq(diplomaticBlocs.campaignId, campaignId),
+          eq(diplomaticBlocs.status, "ACTIVE"),
+        ),
+      )
+      .limit(1),
+  ]);
+  const blocMembers = ownBloc[0]
+    ? await reader
+        .select({ countryId: diplomaticBlocMembers.countryId })
+        .from(diplomaticBlocMembers)
+        .where(eq(diplomaticBlocMembers.blocId, ownBloc[0].blocId))
+    : [];
+  const statuses = new Map<string, DiplomaticRelationStatus[]>();
+  for (const relation of relations) {
+    const other =
+      relation.fromCountryId === countryId ? relation.toCountryId : relation.fromCountryId;
+    statuses.set(other, [...(statuses.get(other) ?? []), relation.status]);
+  }
+  const sameBloc = new Set(blocMembers.map((row) => row.countryId));
+  const weights = new Map<string, number>();
+  for (const other of new Set([...statuses.keys(), ...sameBloc])) {
+    if (other === countryId) continue;
+    const weight = diffusionPartnerWeight({
+      sameBloc: sameBloc.has(other),
+      statuses: statuses.get(other) ?? [],
+    });
+    if (weight > 0) weights.set(other, weight);
+  }
+  return weights;
+}
+
+/** 기술별 전파 가중치 합과 그 기술을 아는 전파 상대 수. 기밀로 묶은 기술은 세지 않는다. */
+async function diffusionMap(reader: Reader, campaignId: string, countryId: string) {
+  const partners = await diffusionPartners(reader, campaignId, countryId);
+  const result = new Map<string, { weight: number; partners: number }>();
+  if (!partners.size) return result;
   const rows = await reader
     .select({ techNodeId: countryResearch.techNodeId, countryId: countryResearch.countryId })
     .from(countryResearch)
-    .innerJoin(countries, eq(countryResearch.countryId, countries.id))
     .where(
       and(
-        eq(countries.campaignId, campaignId),
+        inArray(countryResearch.countryId, [...partners.keys()]),
         eq(countryResearch.status, "COMPLETED"),
         eq(countryResearch.classified, false),
       ),
     );
-  const counts = new Map<string, number>();
   for (const row of rows) {
-    if (row.countryId === countryId) continue;
-    counts.set(row.techNodeId, (counts.get(row.techNodeId) ?? 0) + 1);
+    const current = result.get(row.techNodeId) ?? { weight: 0, partners: 0 };
+    result.set(row.techNodeId, {
+      weight: current.weight + (partners.get(row.countryId) ?? 0),
+      partners: current.partners + 1,
+    });
   }
-  return counts;
+  return result;
 }
 
 /**
@@ -371,10 +438,10 @@ export async function advanceCampaignResearch(
   for (const country of countryRows) {
     const capacity = capacityByCountry.get(country.id);
     if (!capacity || !(Number(capacity.pointsPerYear) > 0)) continue;
-    const [allocations, stateRows, knownByOthers] = await Promise.all([
+    const [allocations, stateRows, diffusion] = await Promise.all([
       effectiveAllocations(tx, country.id, input.turnSequence),
       tx.select().from(countryResearch).where(eq(countryResearch.countryId, country.id)),
-      knownByOthersMap(tx, input.campaignId, country.id),
+      diffusionMap(tx, input.campaignId, country.id),
     ]);
     if (!allocations.rows.length) continue;
     const states = new Map<string, ResearchState>(
@@ -392,7 +459,7 @@ export async function advanceCampaignResearch(
       })),
       techs,
       states,
-      knownByOthers,
+      diffusionWeights: new Map([...diffusion].map(([techId, item]) => [techId, item.weight])),
       fieldFactors: capacity.fieldFactors ?? {},
       facilities: new Set(capacity.facilities ?? []),
     });
@@ -431,7 +498,7 @@ export async function getResearchBoard(input: {
   countryId: string;
   turnSequence: number | null;
 }) {
-  const [techs, capacity, stateRows, allocations, knownByOthers] = await Promise.all([
+  const [techs, capacity, stateRows, allocations, diffusion] = await Promise.all([
     campaignTechGraph(db, input.campaignId),
     db.query.countryResearchCapacity.findFirst({
       where: eq(countryResearchCapacity.countryId, input.countryId),
@@ -440,7 +507,7 @@ export async function getResearchBoard(input: {
     input.turnSequence === null
       ? { turnId: null, rows: [] }
       : effectiveAllocations(db, input.countryId, input.turnSequence),
-    knownByOthersMap(db, input.campaignId, input.countryId),
+    diffusionMap(db, input.campaignId, input.countryId),
   ]);
-  return { techs, capacity: capacity ?? null, stateRows, allocations, knownByOthers };
+  return { techs, capacity: capacity ?? null, stateRows, allocations, diffusion };
 }

@@ -358,6 +358,13 @@
       "when": 1791940000000,
       "tag": "0050_realtime_research",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1791941000000,
+      "tag": "0051_campaign_pause",
+      "breakpoints": true
     }
   ]
 }

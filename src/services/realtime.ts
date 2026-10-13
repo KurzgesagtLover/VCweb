@@ -42,9 +42,10 @@ export const REALTIME_PROCESSORS: RealtimeProcessor[] = [
 
 /**
  * 캠페인 하나의 실시간 판정. 주기가 안 됐거나 다른 작업자가 처리 중이면 건너뛴다.
- * 일시정지 중에는 아무것도 처리하지 않고 시계만 현재 게임 시각에 맞춘다. 재개하면 그 시각부터 진행한다.
+ * 일시정지 중에는 게임 시각이 멈춰 있으므로 아무것도 하지 않는다.
  */
 export async function tickCampaignRealtime(campaign: Campaign, now: Date) {
+  if (campaign.pausedAt) return null;
   await db
     .insert(realtimeClocks)
     .values({ campaignId: campaign.id })
@@ -64,14 +65,7 @@ export async function tickCampaignRealtime(campaign: Campaign, now: Date) {
     if (!turn) return null;
     const gameNow = campaignGameInstant(campaign, turn, now);
     if (!gameNow) return null;
-    const paused = campaign.realtimePaused;
-    const held =
-      clock.lastGameAt && clock.lastGameAt.getTime() > gameNow.getTime()
-        ? clock.lastGameAt
-        : gameNow;
-    const step = paused
-      ? { from: held, to: held, gameDays: 0, capped: false }
-      : realtimeStep({ lastGameAt: clock.lastGameAt, gameNow });
+    const step = realtimeStep({ lastGameAt: clock.lastGameAt, gameNow });
     if (!step) return null;
     const results: Record<string, unknown> = {};
     if (step.gameDays > 0) {
@@ -88,7 +82,6 @@ export async function tickCampaignRealtime(campaign: Campaign, now: Date) {
       }
     }
     const lastResult = {
-      paused,
       gameFrom: step.from.toISOString(),
       gameTo: step.to.toISOString(),
       gameDays: Math.round(step.gameDays * 10_000) / 10_000,

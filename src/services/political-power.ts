@@ -5,6 +5,7 @@ import {
   accruePoliticalPower,
   type PoliticalPowerClock,
 } from "@/src/domain/politics/political-power";
+import { campaignNow } from "@/src/domain/turn/schedule";
 
 type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -39,7 +40,10 @@ export async function lockAndAccruePoliticalPower(
   }
   if (!resource) throw new Error("정치력 자원을 초기화할 수 없습니다.");
 
-  const elapsedRealSeconds = Math.max(0, now.getTime() - resource.lastAccruedAt.getTime()) / 1000;
+  // 일시정지 중에는 멈춘 시각까지만 정산한다. 재개할 때 정산 시각을 멈춘 시간만큼 미룬다.
+  const accrueUntil = campaignNow(now, clock.pausedAt);
+  const elapsedRealSeconds =
+    Math.max(0, accrueUntil.getTime() - resource.lastAccruedAt.getTime()) / 1000;
   const accrued = accruePoliticalPower({
     balance: resource.balance,
     incomePerGameDay: resource.incomePerGameDay,
@@ -47,17 +51,19 @@ export async function lockAndAccruePoliticalPower(
     clock,
   });
   const balance = accrued.balance.toDecimalPlaces(4).toString();
+  const lastAccruedAt =
+    accrueUntil.getTime() > resource.lastAccruedAt.getTime() ? accrueUntil : resource.lastAccruedAt;
 
   await tx
     .update(countryPoliticalResources)
-    .set({ balance, lastAccruedAt: now, updatedAt: now })
+    .set({ balance, lastAccruedAt, updatedAt: now })
     .where(eq(countryPoliticalResources.id, resource.id));
 
   return {
     id: resource.id,
     balance,
     incomePerGameDay: resource.incomePerGameDay,
-    incomePerRealSecond: accrued.incomePerRealSecond.toString(),
+    incomePerRealSecond: clock.pausedAt ? "0" : accrued.incomePerRealSecond.toString(),
     serverNow: now.toISOString(),
   };
 }

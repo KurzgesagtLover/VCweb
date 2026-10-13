@@ -10,6 +10,7 @@ import { auditLogs, campaignLoreViews, campaignMaps, campaigns, turns } from "@/
 import { getViewerContext } from "@/src/db/queries/viewer";
 import {
   adjudicationRealDayInterval,
+  campaignNow,
   GAME_TIME_UNITS,
   gameDurationInDays,
   type GameTimeUnit,
@@ -20,6 +21,7 @@ import {
   REALTIME_TICK_MAX_SECONDS,
   REALTIME_TICK_MIN_SECONDS,
 } from "@/src/domain/realtime/clock";
+import { setCampaignPaused } from "@/src/services/campaign-pause";
 
 const campaignSettingsSchema = z.object({
   name: z.string().trim().min(2).max(80),
@@ -35,7 +37,7 @@ const campaignSettingsSchema = z.object({
     .min(REALTIME_TICK_MIN_SECONDS)
     .max(REALTIME_TICK_MAX_SECONDS)
     .default(REALTIME_TICK_DEFAULT_SECONDS),
-  realtimePaused: z.union([z.literal("true"), z.null()]).transform((value) => value === "true"),
+  paused: z.union([z.literal("true"), z.null()]).transform((value) => value === "true"),
 });
 
 export async function updateCampaignSettingsAction(formData: FormData) {
@@ -51,7 +53,7 @@ export async function updateCampaignSettingsAction(formData: FormData) {
     closeTime: formData.get("closeTime"),
     mapCount: formData.get("mapCount"),
     realtimeTickSeconds: formData.get("realtimeTickSeconds") ?? undefined,
-    realtimePaused: formData.get("realtimePaused"),
+    paused: formData.get("paused"),
   });
   const [turnCloseHour, turnCloseMinute] = input.closeTime.split(":").map(Number);
   const realDayInterval = adjudicationRealDayInterval(
@@ -76,6 +78,7 @@ export async function updateCampaignSettingsAction(formData: FormData) {
       mapCount: number;
       mapRevision: number;
       administrativeDivisionRevision: number;
+      pausedAt: Date | string | null;
     }>(sql`
       SELECT
         id,
@@ -90,13 +93,16 @@ export async function updateCampaignSettingsAction(formData: FormData) {
         turn_close_minute AS "turnCloseMinute",
         map_count AS "mapCount",
         map_revision AS "mapRevision",
-        administrative_division_revision AS "administrativeDivisionRevision"
+        administrative_division_revision AS "administrativeDivisionRevision",
+        paused_at AS "pausedAt"
       FROM campaigns
       WHERE id = ${context.campaign!.id}
       FOR UPDATE
     `);
     const locked = lockedRows.at(0);
     if (!locked) throw new Error("캠페인을 찾을 수 없습니다.");
+    const now = new Date();
+    const pausedAt = locked.pausedAt ? new Date(locked.pausedAt) : null;
     await tx
       .update(campaigns)
       .set({
@@ -121,7 +127,6 @@ export async function updateCampaignSettingsAction(formData: FormData) {
         turnCloseMinute,
         mapCount: input.mapCount,
         realtimeTickSeconds: input.realtimeTickSeconds,
-        realtimePaused: input.realtimePaused,
         updatedAt: new Date(),
       })
       .where(eq(campaigns.id, locked.id));
@@ -151,14 +156,21 @@ export async function updateCampaignSettingsAction(formData: FormData) {
       orderBy: [desc(turns.sequence)],
     });
     if (currentTurn?.status === "DRAFT") {
+      // 멈춘 동안에는 멈춘 시각을 기준으로 잡고, 재개하면서 멈춘 시간만큼 함께 밀린다.
       await tx
         .update(turns)
         .set({
-          deadlineAt: nextTurnDeadline(new Date(), realDayInterval, turnCloseHour, turnCloseMinute),
-          updatedAt: new Date(),
+          deadlineAt: nextTurnDeadline(
+            campaignNow(now, pausedAt),
+            realDayInterval,
+            turnCloseHour,
+            turnCloseMinute,
+          ),
+          updatedAt: now,
         })
         .where(eq(turns.id, currentTurn.id));
     }
+    const pause = await setCampaignPaused(tx, { id: locked.id, pausedAt }, input.paused, now);
 
     await tx.insert(auditLogs).values({
       campaignId: locked.id,
@@ -176,8 +188,13 @@ export async function updateCampaignSettingsAction(formData: FormData) {
         adjudicationIntervalUnit: locked.adjudicationIntervalUnit,
         closeTime: `${String(locked.turnCloseHour).padStart(2, "0")}:${String(locked.turnCloseMinute).padStart(2, "0")}`,
         mapCount: locked.mapCount,
+        pausedAt: pausedAt?.toISOString() ?? null,
       },
-      afterSummary: { ...input, realDayInterval },
+      afterSummary: {
+        ...input,
+        realDayInterval,
+        ...("shiftMs" in pause ? { resumedAfterMs: pause.shiftMs } : {}),
+      },
       reason: "캠페인 진행 설정 변경",
     });
   });

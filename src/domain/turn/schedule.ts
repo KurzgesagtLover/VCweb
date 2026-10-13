@@ -145,20 +145,31 @@ export function formatSeoulSchedule(date: Date) {
   }).format(date);
 }
 
+/**
+ * 캠페인 시계가 보는 현재 실제 시각. 일시정지 중에는 멈춘 순간에 고정된다.
+ * 재개할 때 턴 마감과 정치력 정산 시각을 멈춘 시간만큼 뒤로 미루므로, 게임 시간은 멈춘 자리에서 이어진다.
+ */
+export function campaignNow(now: Date, pausedAt: Date | null | undefined) {
+  return pausedAt && pausedAt.getTime() < now.getTime() ? pausedAt : now;
+}
+
 /** 턴 구간 안에서의 현재 게임시각 (월드 캘린더, 실제시각 아님). */
 export function currentGameInstant({
   gameDateStart,
   gameDateEnd,
   deadlineAt,
   intervalRealDays,
-  now = new Date(),
+  now: realNow = new Date(),
+  pausedAt = null,
 }: {
   gameDateStart: string;
   gameDateEnd: string;
   deadlineAt: Date | null;
   intervalRealDays: number;
   now?: Date;
+  pausedAt?: Date | null;
 }) {
+  const now = campaignNow(realNow, pausedAt);
   const start = Date.parse(`${gameDateStart}T00:00:00.000Z`);
   const end = Date.parse(`${gameDateEnd}T23:59:59.999Z`);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;

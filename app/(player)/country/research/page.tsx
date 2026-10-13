@@ -144,8 +144,8 @@ export default async function ResearchPage() {
                   const progressPoints = state?.progressPoints ?? 0;
                   const progress = cost > 0 ? Math.min(100, (progressPoints / cost) * 100) : 0;
                   const percent = allocationByNode.get(node.id) ?? 0;
-                  const known = board.knownByOthers.get(node.id) ?? 0;
-                  const bonus = diffusionBonus(known);
+                  const diffusion = board.diffusion.get(node.id);
+                  const bonus = diffusionBonus(diffusion?.weight ?? 0);
                   const multiplier = (Number(fieldFactors[node.field] ?? 1) || 1) * (1 + bonus);
                   const days =
                     status !== "COMPLETED" && !blocked
@@ -170,7 +170,9 @@ export default async function ResearchPage() {
                       <small className="tno-tech-field">
                         {node.field} ×{(Number(fieldFactors[node.field] ?? 1) || 1).toFixed(2)} ·
                         비용 {node.cost}pt
-                        {known ? ` · 전파 +${Math.round(bonus * 100)}% (${known}개국)` : ""}
+                        {diffusion
+                          ? ` · 전파 +${Math.round(bonus * 100)}% (동맹 ${diffusion.partners}개국)`
+                          : ""}
                       </small>
                       <p>{node.description}</p>
                       <div className="tno-bar" aria-label={`진행률 ${progress.toFixed(0)}%`}>

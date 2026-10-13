@@ -13,6 +13,7 @@ import {
 } from "../../src/domain/research/capacity";
 import {
   diffusionBonus,
+  diffusionPartnerWeight,
   estimatedDays,
   researchStep,
   type ResearchState,
@@ -154,7 +155,7 @@ describe("realtime research progress", () => {
       ],
       techs,
       states,
-      knownByOthers: new Map(),
+      diffusionWeights: new Map(),
       fieldFactors: { 산업: 1 },
       facilities: new Set(),
     });
@@ -173,7 +174,7 @@ describe("realtime research progress", () => {
       allocations: [{ techId: "d", percent: 100 }],
       techs,
       states: new Map(),
-      knownByOthers: new Map([["d", 4]]),
+      diffusionWeights: new Map([["d", 4]]),
       fieldFactors: {},
       facilities: new Set(),
     });
@@ -182,6 +183,21 @@ describe("realtime research progress", () => {
     expect(diffusionBonus(4)).toBeCloseTo(0.3, 6);
     expect(diffusionBonus(100)).toBe(0.5);
     expect(diffusionBonus(0)).toBe(0);
+  });
+
+  it("weights diffusion partners by their alliance ties", () => {
+    expect(diffusionPartnerWeight({ sameBloc: true, statuses: [] })).toBe(1);
+    expect(diffusionPartnerWeight({ sameBloc: false, statuses: ["MUTUAL_DEFENSE"] })).toBe(1);
+    expect(diffusionPartnerWeight({ sameBloc: false, statuses: ["INDEPENDENCE_GUARANTEE"] })).toBe(
+      0.5,
+    );
+    expect(
+      diffusionPartnerWeight({
+        sameBloc: true,
+        statuses: ["MUTUAL_DEFENSE", "INDEPENDENCE_GUARANTEE"],
+      }),
+    ).toBe(1);
+    expect(diffusionPartnerWeight({ sameBloc: false, statuses: ["NORMAL", "WAR"] })).toBe(0);
   });
 
   it("frees the share of completed technologies instead of scaling the rest down", () => {
@@ -194,7 +210,7 @@ describe("realtime research progress", () => {
       ],
       techs,
       states: new Map<string, ResearchState>([["a", { status: "COMPLETED", progressPoints: 100 }]]),
-      knownByOthers: new Map(),
+      diffusionWeights: new Map(),
       fieldFactors: {},
       facilities: new Set(),
     });
@@ -213,7 +229,7 @@ describe("realtime research progress", () => {
       ],
       techs,
       states: new Map(),
-      knownByOthers: new Map(),
+      diffusionWeights: new Map(),
       fieldFactors: {},
       facilities: new Set(),
     });

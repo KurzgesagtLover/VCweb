@@ -187,6 +187,7 @@ export default async function DiplomacyPage() {
         gameDateEnd: context.turn.gameDateEnd,
         deadlineAt: context.turn.deadlineAt?.toISOString() ?? null,
         intervalRealDays,
+        pausedAt: context.campaign.pausedAt?.toISOString() ?? null,
       }}
       turnOpen={context.turn.status === "DRAFT"}
       inboxCount={desk.records.length}
